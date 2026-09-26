@@ -5,7 +5,7 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 ## Features
 
 - Modern Tetris rules: SRS rotation with wall kicks, lock delay, 7-bag randomizer
-- Hold piece, preview of the next three pieces and a ghost piece showing where the piece lands
+- Hold piece and preview of the next three pieces
 - Scoring with soft and hard drop points, combos and back-to-back tetris bonus
 - A new level every 10 lines, getting faster up to level 15
 - Line clear animation with particles, score popups and screen shake on a tetris

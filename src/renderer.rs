@@ -169,17 +169,6 @@ impl Renderer {
         }
 
         if state.status == GameStatus::Playing && state.line_clear.is_none() {
-            // Ghost piece shows where the piece lands
-            let distance = state.drop_distance();
-            if distance > 0 {
-                let ghost = Piece {
-                    y: state.piece.y + distance,
-                    ..state.piece
-                };
-                for (x, y) in visible_cells(&ghost) {
-                    draw_ghost_block(cell(x, y), block, ghost.kind.color(), px);
-                }
-            }
             for (x, y) in visible_cells(&state.piece) {
                 let position = cell(x, y);
                 draw_block(
@@ -693,25 +682,6 @@ fn draw_block(x: f32, y: f32, size: f32, color: Color, layout: &Layout) {
         size - 2.0 * bevel,
         size - 2.0 * bevel,
         color,
-    );
-}
-
-fn draw_ghost_block(position: Vec2, size: f32, color: Color, px: f32) {
-    let line = 2.0 * px.max(size * 0.04);
-    draw_rectangle(
-        position.x,
-        position.y,
-        size,
-        size,
-        Color::new(color.r, color.g, color.b, 0.14),
-    );
-    draw_rectangle_lines(
-        position.x + px,
-        position.y + px,
-        size - 2.0 * px,
-        size - 2.0 * px,
-        line,
-        Color::new(color.r, color.g, color.b, 0.75),
     );
 }
 
