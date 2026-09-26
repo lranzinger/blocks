@@ -17,17 +17,18 @@ impl ScreenConfig {
         let screen_width = screen_width();
         let screen_height = screen_height();
 
-        // Calculate optimal block size
+        // Calculate optimal block size, 95% of available space.
+        // Whole pixels keep the cached board and the falling piece pixel aligned.
         let scale_x = screen_width / BOARD.width as f32;
         let scale_y = screen_height / BOARD.height as f32;
-        let block_size: f32 = scale_x.min(scale_y) * 0.95; // 95% of available space
-
-        // Center the game field
-        let offset_x = (screen_width - (BOARD.width as f32 * block_size)) / 2.0;
-        let offset_y = (screen_height - (BOARD.height as f32 * block_size)) / 2.0;
+        let block_size = (scale_x.min(scale_y) * 0.95).floor().max(1.0);
 
         let field_width = BOARD.width as f32 * block_size;
         let field_height = BOARD.height as f32 * block_size;
+
+        // Center the game field
+        let offset_x = ((screen_width - field_width) / 2.0).round();
+        let offset_y = ((screen_height - field_height) / 2.0).round();
 
         Self {
             block_size,

@@ -1,5 +1,5 @@
 #[cfg(target_arch = "wasm32")]
-extern "C" {
+unsafe extern "C" {
     fn js_get_high_score() -> u32;
     fn js_save_high_score(score: u32);
 }

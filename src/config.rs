@@ -30,21 +30,18 @@ pub const TIMING: GameTiming = GameTiming {
 };
 
 pub struct InputConfig {
-    pub swipe_threshold: f32,
+    /// Horizontal finger travel per moved cell, relative to the block size
+    pub swipe_step: f32,
     pub hold_threshold: Time,
     pub move_cooldown: Time,
     pub touch_threshold: Time,
-    pub move_cooldown_swipe: Time,
-    pub move_cooldown_hold: Time,
 }
 
 pub const INPUT: InputConfig = InputConfig {
-    swipe_threshold: 30.0,
+    swipe_step: 0.8,
     hold_threshold: Time(0.2),
     move_cooldown: Time(0.1),
     touch_threshold: Time(0.15),
-    move_cooldown_swipe: Time(0.2),
-    move_cooldown_hold: Time(0.1),
 };
 
 pub struct UiText {
@@ -56,6 +53,7 @@ pub struct UiText {
     pub score: &'static str,
     pub level: &'static str,
     pub highscore: &'static str,
+    pub instructions: [&'static str; 3],
 }
 
 pub const TEXT: UiText = UiText {
@@ -67,6 +65,11 @@ pub const TEXT: UiText = UiText {
     score: "Score: ",
     level: "Level: ",
     highscore: "Highscore: ",
+    instructions: [
+        "Links/Rechts: Bewegen",
+        "Tippen: Drehen",
+        "Halten: Fallen lassen",
+    ],
 };
 
 pub struct ScoreConfig {
