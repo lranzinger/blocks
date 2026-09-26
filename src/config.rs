@@ -30,20 +30,23 @@ pub const TIMING: GameTiming = GameTiming {
 };
 
 pub struct InputConfig {
-    /// Horizontal finger travel per moved cell, relative to the block size
-    pub swipe_step: f32,
+    /// Horizontal swipe distance in touch pixels that starts moving the piece
+    pub swipe_threshold: f32,
     pub hold_threshold: Time,
     pub move_cooldown: Time,
     pub touch_threshold: Time,
-    /// Interval of the repeated moves while the finger rests after a swipe
+    /// Interval of the moves while swiping
+    pub move_cooldown_swipe: Time,
+    /// Interval of the moves while the finger rests after a swipe
     pub move_cooldown_hold: Time,
 }
 
 pub const INPUT: InputConfig = InputConfig {
-    swipe_step: 0.8,
+    swipe_threshold: 30.0,
     hold_threshold: Time(0.2),
     move_cooldown: Time(0.1),
     touch_threshold: Time(0.15),
+    move_cooldown_swipe: Time(0.2),
     move_cooldown_hold: Time(0.1),
 };
 

@@ -30,7 +30,7 @@ impl Game {
                 }
             }
             GameStatus::Playing => {
-                let input = self.input.update(self.renderer.screen.block_size);
+                let input = self.input.update();
                 self.state.handle_input(input);
                 self.state.update(get_frame_time());
             }
