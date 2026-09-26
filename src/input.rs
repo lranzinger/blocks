@@ -1,6 +1,9 @@
 use macroquad::prelude::*;
 
-use crate::config::{KEYBOARD, TOUCH, Time};
+use crate::{
+    config::{KEYBOARD, TOUCH, Time},
+    storage,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
@@ -47,8 +50,9 @@ struct TouchState {
 pub struct InputHandler {
     held_move: Option<HeldMove>,
     touch: Option<TouchState>,
-    /// The player used touch input, used to show the matching help texts
-    pub touch_used: bool,
+    /// Touch is the current input method, used to show the matching help texts.
+    /// Starts with the device type and follows the input used last.
+    pub touch_mode: bool,
 }
 
 const LEFT_KEYS: [KeyCode; 2] = [KeyCode::Left, KeyCode::A];
@@ -61,7 +65,7 @@ impl InputHandler {
         Self {
             held_move: None,
             touch: None,
-            touch_used: false,
+            touch_mode: storage::is_touch_device(),
         }
     }
 
@@ -85,6 +89,9 @@ impl InputHandler {
     }
 
     fn keyboard(&mut self, now: Time, input: &mut FrameInput) {
+        if get_last_key_pressed().is_some() {
+            self.touch_mode = false;
+        }
         let pressed = |keys: &[KeyCode]| keys.iter().find(|key| is_key_pressed(**key)).copied();
 
         if let Some(key) = pressed(&LEFT_KEYS) {
@@ -184,7 +191,7 @@ impl InputHandler {
         let Some(touch) = touches.first() else {
             return;
         };
-        self.touch_used = true;
+        self.touch_mode = true;
         // Touch positions are in physical pixels, the layout uses logical ones
         let position = touch.position / screen_dpi_scale();
 

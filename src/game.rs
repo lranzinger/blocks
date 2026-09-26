@@ -71,7 +71,7 @@ impl Game {
             self.backdrop.update(delta);
         }
 
-        let touch = self.input.touch_used || self.renderer.layout.portrait;
+        let touch = self.input.touch_mode;
         self.renderer
             .draw(&self.state, &self.effects, &self.backdrop, touch, now);
     }

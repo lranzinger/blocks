@@ -5,6 +5,7 @@ unsafe extern "C" {
     fn js_get_high_score() -> u32;
     fn js_save_high_score(score: u32);
     fn js_vibrate(milliseconds: u32);
+    fn js_is_touch_device() -> u32;
 }
 
 pub fn get_high_score() -> u32 {
@@ -36,4 +37,15 @@ pub fn vibrate(milliseconds: u32) {
 
     #[cfg(not(target_arch = "wasm32"))]
     let _ = milliseconds;
+}
+
+/// The device is mainly used by touch, like phones and tablets
+pub fn is_touch_device() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        js_is_touch_device() != 0
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    false
 }
