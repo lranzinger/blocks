@@ -107,7 +107,8 @@ fi
 # Collect everything that is served in dist/
 rm -rf dist
 mkdir -p dist
-cp index.html custom.js gl.js blocks.wasm dist/
+cp index.html custom.js gl.js blocks.wasm favicon.svg site.webmanifest dist/
+cp -r icons dist/
 echo "✔ Web files collected in dist/"
 
 echo "✅ Build process completed successfully."
