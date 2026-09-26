@@ -1,4 +1,6 @@
+// Provided by custom.js. Declared as imports, newer Rust versions reject undefined symbols.
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn js_get_high_score() -> u32;
     fn js_save_high_score(score: u32);
