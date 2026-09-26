@@ -46,8 +46,10 @@ install_wasm_target() {
 
 echo "🛠️  Installing Development Dependencies..."
 
-# 1. Install simple-http-server if not installed
-install_cargo_binary "simple-http-server"
+# 1. Install simple-http-server (local development only) and wasm-opt if not installed
+if [ -z "$CI" ]; then
+    install_cargo_binary "simple-http-server"
+fi
 install_cargo_binary "wasm-opt"
 
 # 2. Install wasm32-unknown-unknown Rust target if not installed
@@ -87,12 +89,25 @@ else
     cargo build --target wasm32-unknown-unknown --release
 
     echo "⚙️  Optimizing with wasm-opt..."
-    wasm-opt -O3 \
+    # Features Rust enables by default for wasm32-unknown-unknown
+    wasm-opt -Oz \
+        --enable-bulk-memory \
+        --enable-mutable-globals \
+        --enable-nontrapping-float-to-int \
+        --enable-sign-ext \
+        --enable-reference-types \
+        --enable-multivalue \
         --strip-debug \
         --strip-producers \
         -o blocks.wasm \
         target/wasm32-unknown-unknown/release/blocks.wasm
     echo "✔ Release build complete and optimized: blocks.wasm"
 fi
+
+# Collect everything that is served in dist/
+rm -rf dist
+mkdir -p dist
+cp index.html custom.js gl.js blocks.wasm dist/
+echo "✔ Web files collected in dist/"
 
 echo "✅ Build process completed successfully."

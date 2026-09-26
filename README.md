@@ -11,22 +11,23 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 - Progressive level system
 - High score tracking with browser storage
 - Visual effects for line clears
+- 7-bag randomizer, every piece appears once per seven pieces
 - Debug mode with FPS counter
 
 ## Controls
 
 ### Touch Controls
 
-- Swipe left/right: Move piece
-- Long swipe: Fast movement
-- Tip once: Rotate piece
+- Swipe left/right: Move piece, it follows the finger one cell at a time
+- Tap once: Rotate piece
 - Hold: Drop piece
 
 ### Keyboard Controls
 
-- Arrow Keys/WASD: Move and rotate
-- Down/S: Drop piece
+- Left/Right or A/D: Move piece
 - Up/W: Rotate piece
+- Down/S: Drop piece faster
+- Space: Hard drop
 
 ## Build Instructions
 
@@ -37,6 +38,22 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 # Release build
 ./build.sh release
 ```
+
+The web files end up in `dist/`. Serve that folder with any static web server, for example
+`simple-http-server dist` or `python3 -m http.server -d dist`.
+
+```bash
+# Run the unit tests of the game logic
+cargo test
+```
+
+## Deployment
+
+Every push is built and checked (format, clippy, tests) by GitHub Actions and deployed to Cloudflare Pages:
+
+- `main` goes to production.
+- Every other branch gets its own preview URL (`<branch>.<project>.pages.dev`), which is listed in the
+  summary of the workflow run. Production is not affected.
 
 ## Play Online
 
