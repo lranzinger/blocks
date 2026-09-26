@@ -47,7 +47,7 @@ impl Renderer {
 
     pub fn draw(&mut self, state: &GameState) {
         let current_size = (screen_width(), screen_height());
-        if self.screen.size != current_size {
+        if self.screen.size != current_size || self.screen.dpi_scale != screen_dpi_scale() {
             self.screen = ScreenConfig::new();
             self.font.update();
             self.text.update(self.font.stats_size as u16);
@@ -67,39 +67,33 @@ impl Renderer {
 
         // Update placed pieces if needed
         if self.board_dirty {
-            self.update_placed_pieces(
-                &state.board.cells,
-                &state.board.flashing_lines,
-                self.flashing,
-            );
+            match (&state.status, &state.dummy_board) {
+                (GameStatus::Start, Some(dummy_board)) => {
+                    self.update_placed_pieces(&dummy_board.cells, &[], false);
+                }
+                _ => self.update_placed_pieces(
+                    &state.board.cells,
+                    &state.board.flashing_lines,
+                    self.flashing,
+                ),
+            }
         }
 
         // Draw game field
-        draw_texture(
-            &self.game_field.texture,
-            self.screen.offset_x,
-            self.screen.offset_y,
-            WHITE,
-        );
+        self.draw_field_texture(&self.game_field.texture);
 
         // Draw placed pieces
-        draw_texture(
-            &self.placed_pieces.texture,
-            self.screen.offset_x,
-            self.screen.offset_y,
-            WHITE,
-        );
+        self.draw_field_texture(&self.placed_pieces.texture);
 
         match state.status {
             GameStatus::Start => {
-                if let Some(dummy_board) = &state.dummy_board {
-                    self.update_placed_pieces(&dummy_board.cells, &[], false);
-                }
-
                 self.draw_start_screen();
             }
             GameStatus::Playing => {
-                self.draw_current_piece(&state.piece);
+                // The locked piece is part of the board while lines are flashing
+                if state.board.flashing_lines.is_empty() {
+                    self.draw_current_piece(&state.piece);
+                }
                 self.draw_stats(state.score.current, state.level.current);
             }
             GameStatus::GameOver => {
@@ -111,6 +105,19 @@ impl Renderer {
             }
         }
         self.draw_debug_info();
+    }
+
+    fn draw_field_texture(&self, texture: &Texture2D) {
+        draw_texture_ex(
+            texture,
+            self.screen.offset_x,
+            self.screen.offset_y,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(self.screen.field_width, self.screen.field_height)),
+                ..Default::default()
+            },
+        );
     }
 
     fn update_game_field(&mut self) {
@@ -146,15 +153,16 @@ impl Renderer {
     }
 
     fn set_render_targets(&mut self) {
-        // Create new render targets at new size
-        self.game_field = render_target(
-            self.screen.field_width as u32,
-            self.screen.field_height as u32,
-        );
-        self.placed_pieces = render_target(
-            self.screen.field_width as u32,
-            self.screen.field_height as u32,
-        );
+        // Create new render targets at new size in physical pixels,
+        // otherwise the field gets upscaled and blurry on high DPI screens
+        let width = (self.screen.field_width * self.screen.dpi_scale)
+            .round()
+            .max(1.0) as u32;
+        let height = (self.screen.field_height * self.screen.dpi_scale)
+            .round()
+            .max(1.0) as u32;
+        self.game_field = render_target(width, height);
+        self.placed_pieces = render_target(width, height);
 
         // Set filtering mode
         self.game_field.texture.set_filter(FilterMode::Nearest);

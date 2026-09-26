@@ -9,6 +9,7 @@ pub struct ScreenConfig {
     pub field_width: f32,
     pub field_height: f32,
     pub size: (f32, f32),
+    pub dpi_scale: f32,
 }
 
 impl ScreenConfig {
@@ -35,6 +36,7 @@ impl ScreenConfig {
             field_width,
             field_height,
             size: (screen_width, screen_height),
+            dpi_scale: screen_dpi_scale(),
         }
     }
 }

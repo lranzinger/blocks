@@ -32,6 +32,10 @@ impl Game {
         self.state.piece.position = (BOARD.width / 2 - piece_width / 2, -1);
         self.state.piece.rotation = RotationState::Zero;
         self.state.piece.rotated = self.get_rotated_shape();
+
+        if self.is_game_over() {
+            self.end_game();
+        }
     }
 
     fn get_rotated_shape(&self) -> [(i32, i32); 4] {
@@ -63,16 +67,46 @@ impl Game {
         true
     }
 
-    fn lock_piece(&mut self) {
+    /// Writes the current piece into the board.
+    /// Returns `true` if part of the piece is above the visible field (lock out).
+    fn lock_piece(&mut self) -> bool {
+        let mut locked_out = false;
         for &(x, y) in &self.state.piece.rotated {
             let board_x = self.state.piece.position.0 + x;
             let board_y = self.state.piece.position.1 + y;
             if board_y >= 0 {
                 self.state.board.cells[board_y as usize][board_x as usize] =
                     Some(self.state.piece.typ.color());
+            } else {
+                locked_out = true;
             }
         }
         self.input.reset();
+        locked_out
+    }
+
+    fn settle_piece(&mut self) {
+        let locked_out = self.lock_piece();
+        self.renderer.mark_board_dirty();
+        if locked_out {
+            self.end_game();
+            return;
+        }
+
+        self.clear_lines();
+        // With cleared lines the next piece spawns after the flash animation
+        if self.state.board.flashing_lines.is_empty() {
+            self.spawn_piece();
+        }
+    }
+
+    fn end_game(&mut self) {
+        let last_highscore = storage::get_high_score();
+        let new_highscore = self.state.score.highest;
+        if new_highscore > last_highscore {
+            storage::update_high_score(new_highscore);
+        }
+        self.state.status = GameStatus::GameOver;
     }
 
     fn clear_lines(&mut self) {
@@ -126,6 +160,8 @@ impl Game {
                     self.state.dummy_board = None;
                     self.state.status = GameStatus::Playing;
                     self.renderer.mark_board_dirty();
+                    // Prevent the button tap from rotating the first piece
+                    self.input.reset();
                 }
             }
             GameStatus::Playing => self.update_gameplay(),
@@ -133,6 +169,7 @@ impl Game {
                 if self.renderer.check_click(GameStatus::GameOver) {
                     self.restart();
                     self.state.status = GameStatus::Playing;
+                    self.input.reset();
                 }
             }
         }
@@ -141,14 +178,16 @@ impl Game {
     fn update_gameplay(&mut self) {
         let delta = get_frame_time();
 
-        // Handle line clear animation
+        // Handle line clear animation, the game is paused meanwhile
         if !self.state.board.flashing_lines.is_empty() {
             self.state.timing.line_clear_timer -= delta;
             if self.state.timing.line_clear_timer <= 0.0 {
                 // Remove lines after flashing
                 self.remove_flashing_lines();
                 self.state.board.flashing_lines.clear();
+                self.spawn_piece();
             }
+            return;
         }
 
         // Update timers
@@ -160,24 +199,18 @@ impl Game {
             if self.can_move(0, 1) {
                 self.state.piece.position.1 += 1;
             } else {
-                self.lock_piece();
-                self.clear_lines();
-                self.renderer.mark_board_dirty();
-                self.spawn_piece();
+                self.settle_piece();
             }
-        }
-
-        if self.is_game_over() {
-            let last_highscore = storage::get_high_score();
-            let new_highscore = self.state.score.highest;
-            if new_highscore > last_highscore {
-                storage::update_high_score(new_highscore);
-            }
-            self.state.status = GameStatus::GameOver;
         }
     }
 
     pub fn handle_input(&mut self, input: InputState) {
+        if !matches!(self.state.status, GameStatus::Playing)
+            || !self.state.board.flashing_lines.is_empty()
+        {
+            return;
+        }
+
         match input {
             InputState::MoveLeft => {
                 if self.can_move(-1, 0) {
@@ -217,7 +250,7 @@ impl Game {
 
         for &offset in &offsets {
             self.state.piece.position.0 = original_x + offset;
-            if self.is_valid_position() {
+            if self.can_move(0, 0) {
                 return;
             }
         }
@@ -226,21 +259,6 @@ impl Game {
         self.state.piece.position.0 = original_x;
         self.state.piece.rotation = temp_rotation;
         self.state.piece.rotated = self.get_rotated_shape();
-    }
-
-    fn is_valid_position(&self) -> bool {
-        for &(x, y) in &self.state.piece.rotated {
-            let new_x = self.state.piece.position.0 + x;
-            let new_y = self.state.piece.position.1 + y;
-            if new_x < 0
-                || new_x >= BOARD.width
-                || new_y >= BOARD.height
-                || (new_y >= 0 && self.state.board.cells[new_y as usize][new_x as usize].is_some())
-            {
-                return false;
-            }
-        }
-        true
     }
 
     fn restart(&mut self) {

@@ -2,7 +2,7 @@ use macroquad::color::Color;
 use smallvec::SmallVec;
 
 use crate::{
-    config::BOARD,
+    config::{BOARD, LEVEL_CONFIGS},
     dummy_board::DummyBoard,
     storage,
     tetromino::{RotationState, Tetromino},
@@ -76,7 +76,7 @@ impl GameState {
             },
             timing: TimingState {
                 fall_timer: 0.0,
-                fall_interval: 0.48,
+                fall_interval: LEVEL_CONFIGS[0].fall_interval,
                 line_clear_timer: 0.0,
             },
             level: LevelState {
