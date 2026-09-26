@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Blocks</title>
     <link rel="icon" href="data:,">
+    <link rel="preload" href="blocks.wasm" as="fetch" type="application/wasm" crossorigin>
     <style>
         html,
         body,
@@ -22,12 +23,17 @@
             user-select: none;           /* Standard property for text selection */
             touch-action: none;          /* Prevent default gestures */
         }
+
+        canvas:focus {
+            outline: none;               /* Hide the focus ring of the focused canvas */
+        }
     </style>
 </head>
 <body>
     <canvas id="glcanvas" tabindex='1'></canvas>
-    <script src="https://not-fl3.github.io/miniquad-samples/mq_js_bundle.js"></script>  
-    <script type="text/javascript" src="custom.js"></script>
+    <!-- WebGL loader from the miniquad crate (js/gl.js), keep in sync when updating miniquad -->
+    <script src="gl.js"></script>
+    <script src="custom.js"></script>
     <script>load("blocks.wasm");</script>
 </body>
 </html>

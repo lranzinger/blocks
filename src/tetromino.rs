@@ -1,7 +1,7 @@
 use macroquad::prelude::*;
 use rand::gen_range;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Tetromino {
     I,
     O,
@@ -38,16 +38,46 @@ impl Tetromino {
     }
 
     pub fn random() -> Self {
-        const PIECES: [Tetromino; 7] = [
-            Tetromino::I,
-            Tetromino::O,
-            Tetromino::T,
-            Tetromino::S,
-            Tetromino::Z,
-            Tetromino::J,
-            Tetromino::L,
-        ];
-        PIECES[gen_range(0, PIECES.len())]
+        Self::ALL[gen_range(0, Self::ALL.len())]
+    }
+
+    const ALL: [Tetromino; 7] = [
+        Tetromino::I,
+        Tetromino::O,
+        Tetromino::T,
+        Tetromino::S,
+        Tetromino::Z,
+        Tetromino::J,
+        Tetromino::L,
+    ];
+}
+
+/// 7-bag randomizer: every piece appears exactly once per bag of seven,
+/// which prevents long droughts of a single piece.
+pub struct Bag {
+    pieces: [Tetromino; 7],
+    next: usize,
+}
+
+impl Bag {
+    pub fn new() -> Self {
+        Self {
+            pieces: Tetromino::ALL,
+            next: Tetromino::ALL.len(),
+        }
+    }
+
+    pub fn next(&mut self) -> Tetromino {
+        if self.next >= self.pieces.len() {
+            // Fisher-Yates shuffle
+            for i in (1..self.pieces.len()).rev() {
+                self.pieces.swap(i, gen_range(0, i + 1));
+            }
+            self.next = 0;
+        }
+        let piece = self.pieces[self.next];
+        self.next += 1;
+        piece
     }
 }
 

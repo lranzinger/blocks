@@ -1,10 +1,10 @@
 [package]
 name = "blocks"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [profile.release]
-opt-level = 3     # Max speed optimization
+opt-level = "z"   # Optimize for size, the game logic is far from CPU bound
 lto = "fat"       # More aggressive LTO
 codegen-units = 1 # Reduce parallel code generation units
 strip = true      # Strip symbols
@@ -12,5 +12,4 @@ panic = 'abort'   # Remove panic unwinding
 debug = false     # No debug symbols
 
 [dependencies]
-macroquad = "0.4"
-smallvec = "1.13.2"
+macroquad = "0.4.16"

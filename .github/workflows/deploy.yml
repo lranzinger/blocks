@@ -2,43 +2,80 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - main
+      - "**"
+  pull_request:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-          override: true
+          components: rustfmt, clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+  deploy:
+    # main is deployed to production, every other branch gets a preview URL
+    needs: check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Install wasm-opt
-        run: cargo install wasm-opt
+        run: |
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz | tar xz
+          echo "$PWD/binaryen-version_123/bin" >> "$GITHUB_PATH"
 
       - name: Build
-        run: cargo build --release --target wasm32-unknown-unknown
-
-      - name: Prepare Deployment Directory
-        run: |
-          mkdir -p ./deploy
-          cp ./target/wasm32-unknown-unknown/release/blocks.wasm ./deploy/
-          cp index.html ./deploy/
-          cp custom.js ./deploy/
-
-      - name: Optimize binary
-        run: wasm-opt -O3 -o ./deploy/blocks.wasm ./deploy/blocks.wasm
+        run: ./build.sh release
 
       - name: Deploy to Cloudflare Pages
-        run: npx wrangler pages deploy ./deploy --project-name blocks
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=blocks --branch=${{ github.ref_name }}
+
+      - name: Summary
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+          ALIAS_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
+        run: |
+          echo "### Deployed \`${GITHUB_REF_NAME}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deployment: $DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$ALIAS_URL" ]; then
+            echo "- Branch URL: $ALIAS_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi

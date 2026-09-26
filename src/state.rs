@@ -1,15 +1,15 @@
 use macroquad::color::Color;
-use smallvec::SmallVec;
 
 use crate::{
-    config::BOARD,
+    config::{BOARD, LEVEL_CONFIGS},
     dummy_board::DummyBoard,
     storage,
-    tetromino::{RotationState, Tetromino},
+    tetromino::{Bag, RotationState, Tetromino},
 };
 
 pub type Board = [[Option<Color>; BOARD.width as usize]; BOARD.height as usize];
 
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum GameStatus {
     Start,
     Playing,
@@ -29,9 +29,35 @@ pub struct TimingState {
     pub line_clear_timer: f32,
 }
 
+/// Set of board rows stored as bit mask, one bit per row
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub struct FlashingLines(u32);
+
+impl FlashingLines {
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn len(&self) -> u32 {
+        self.0.count_ones()
+    }
+
+    pub fn contains(&self, row: usize) -> bool {
+        self.0 & (1 << row) != 0
+    }
+
+    pub fn insert(&mut self, row: usize) {
+        self.0 |= 1 << row;
+    }
+
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+}
+
 pub struct BoardState {
     pub cells: Board,
-    pub flashing_lines: SmallVec<[u8; 4]>,
+    pub flashing_lines: FlashingLines,
 }
 
 pub struct ScoreState {
@@ -44,6 +70,13 @@ pub struct LevelState {
     pub total_lines_cleared: u32,
 }
 
+/// Things that happened during a logic update which other parts of the game react to
+#[derive(Default)]
+pub struct Events {
+    pub board_changed: bool,
+    pub piece_locked: bool,
+}
+
 pub struct GameState {
     pub status: GameStatus,
     pub score: ScoreState,
@@ -52,11 +85,14 @@ pub struct GameState {
     pub piece: PieceState,
     pub timing: TimingState,
     pub level: LevelState,
+    pub bag: Bag,
+    pub events: Events,
 }
 
 impl GameState {
     pub fn new() -> Self {
-        let initial_piece = Tetromino::random();
+        // Placeholder until the game starts and the first piece is spawned
+        let initial_piece = Tetromino::O;
         Self {
             status: GameStatus::Start,
             score: ScoreState {
@@ -66,7 +102,7 @@ impl GameState {
             dummy_board: Some(DummyBoard::new()),
             board: BoardState {
                 cells: [[None; BOARD.width as usize]; BOARD.height as usize],
-                flashing_lines: SmallVec::new(),
+                flashing_lines: FlashingLines::default(),
             },
             piece: PieceState {
                 typ: initial_piece,
@@ -76,13 +112,15 @@ impl GameState {
             },
             timing: TimingState {
                 fall_timer: 0.0,
-                fall_interval: 0.48,
+                fall_interval: LEVEL_CONFIGS[0].fall_interval,
                 line_clear_timer: 0.0,
             },
             level: LevelState {
                 current: 0,
                 total_lines_cleared: 0,
             },
+            bag: Bag::new(),
+            events: Events::default(),
         }
     }
 }

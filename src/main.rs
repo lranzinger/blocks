@@ -3,6 +3,7 @@ mod config;
 mod dummy_board;
 mod game;
 mod input;
+mod logic;
 mod renderer;
 mod screen;
 mod state;
@@ -30,9 +31,7 @@ async fn main() {
 
     let mut game = Game::new();
     loop {
-        let input_state = game.input.update();
-        game.handle_input(input_state);
-        game.update_logic();
+        game.update();
         game.renderer.draw(&game.state);
         next_frame().await;
     }

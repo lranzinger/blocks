@@ -1,3 +1,4 @@
 /target
 /pkg
 blocks.wasm
+/dist
