@@ -3,14 +3,21 @@ use macroquad::{
     text::{Font, TextDimensions, load_ttf_font_from_bytes, measure_text},
 };
 
-use crate::config::TEXT;
+use crate::{config::TEXT, screen::ScreenConfig};
 
 const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/BlocksPixel-Regular.ttf");
 
-/// The pixel font is drawn on an 8 pixel grid, multiples of 8 keep it crisp
-fn pixel_font_size(size: f32) -> f32 {
-    ((size / 8.0).round() * 8.0).max(8.0)
+/// The pixel font is drawn on an 8 pixel grid. Multiples of 8 physical pixels keep it crisp,
+/// small sizes use multiples of 4 to stay readable.
+/// Rounds down, so the text never gets larger than the given size.
+fn pixel_font_size(size: f32, dpi_scale: f32) -> f32 {
+    let physical = size * dpi_scale;
+    let grid = if physical >= 32.0 { 8.0 } else { 4.0 };
+    ((physical / grid).floor() * grid).max(8.0) / dpi_scale
 }
+
+/// Share of the game field width that texts on the overlay screens may use
+const MAX_TEXT_WIDTH: f32 = 0.9;
 
 pub struct FontCache {
     pub font: Font,
@@ -21,7 +28,7 @@ pub struct FontCache {
 }
 
 impl FontCache {
-    pub fn new() -> Self {
+    pub fn new(screen: &ScreenConfig) -> Self {
         let mut font = load_ttf_font_from_bytes(FONT_BYTES).expect("Embedded font is valid");
         font.set_filter(FilterMode::Nearest);
 
@@ -32,17 +39,25 @@ impl FontCache {
             debug_size: 0.0,
             stats_size: 0.0,
         };
-        cache.update();
+        cache.update(screen);
         cache
     }
 
-    pub fn update(&mut self) {
-        // Limited by the width as well, so the longest texts fit on narrow screens
-        let base = (screen_height() * 0.03).min(screen_width() * 0.06);
-        self.size = pixel_font_size(base);
-        self.button_size = pixel_font_size(base * 0.9);
-        self.debug_size = pixel_font_size(base * 0.5);
-        self.stats_size = pixel_font_size(base * 0.7);
+    pub fn update(&mut self, screen: &ScreenConfig) {
+        let dpi = screen.dpi_scale;
+        let base = screen_height() * 0.03;
+
+        // The longest texts have to fit into the game field
+        let size = self.max_size_to_fit(&[TEXT.gameover, TEXT.game_name], screen);
+        let button_size = self.max_size_to_fit(&[TEXT.start_button, TEXT.gameover_button], screen);
+        let mut stats_texts = TEXT.instructions.to_vec();
+        stats_texts.push("Highscore: 9999999");
+        let stats_size = self.max_size_to_fit(&stats_texts, screen);
+
+        self.size = pixel_font_size(base.min(size), dpi);
+        self.button_size = pixel_font_size((base * 0.9).min(button_size), dpi);
+        self.stats_size = pixel_font_size((base * 0.7).min(stats_size), dpi);
+        self.debug_size = pixel_font_size(base * 0.5, dpi);
 
         // Rasterize all glyphs up front instead of growing the atlas while drawing
         let characters: Vec<char> = (' '..='~').chain("äöüÄÖÜß".chars()).collect();
@@ -52,9 +67,19 @@ impl FontCache {
             self.debug_size,
             self.stats_size,
         ] {
-            let physical_size = (size * screen_dpi_scale()).ceil() as u16;
+            let physical_size = (size * dpi).ceil() as u16;
             self.font.populate_font_cache(&characters, physical_size);
         }
+    }
+
+    /// Largest font size at which all texts fit into the allowed width of the game field
+    fn max_size_to_fit(&self, texts: &[&str], screen: &ScreenConfig) -> f32 {
+        const REFERENCE_SIZE: f32 = 32.0;
+        let widest = texts
+            .iter()
+            .map(|text| self.measure(text, REFERENCE_SIZE).width)
+            .fold(1.0, f32::max);
+        REFERENCE_SIZE * screen.field_width * MAX_TEXT_WIDTH / widest
     }
 
     pub fn measure(&self, text: &str, size: f32) -> TextDimensions {

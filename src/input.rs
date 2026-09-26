@@ -18,8 +18,11 @@ struct TouchState {
     start_x: f32,
     /// Finger x position at which the last move was triggered
     anchor_x: f32,
+    last_x: f32,
+    last_finger_move: Time,
     start_time: Time,
-    moved: bool,
+    /// Direction of the last swipe, repeated while the finger rests afterwards
+    direction: Option<InputState>,
     dropping: bool,
 }
 
@@ -122,8 +125,10 @@ impl InputHandler {
                 self.touch = Some(TouchState {
                     start_x: x,
                     anchor_x: x,
+                    last_x: x,
+                    last_finger_move: current_time,
                     start_time: current_time,
-                    moved: false,
+                    direction: None,
                     dropping: false,
                 });
             }
@@ -135,22 +140,39 @@ impl InputHandler {
                     return InputState::Drop;
                 }
 
+                if x != state.last_x {
+                    state.last_x = x;
+                    state.last_finger_move = current_time;
+                }
+
                 // The piece follows the finger: one cell per step of finger travel
                 let step = (block_size * INPUT.swipe_step).max(1.0);
                 let dx = x - state.anchor_x;
                 if dx.abs() >= step {
                     state.anchor_x += step * dx.signum();
-                    state.moved = true;
-                    return if dx > 0.0 {
+                    let direction = if dx > 0.0 {
                         InputState::MoveRight
                     } else {
                         InputState::MoveLeft
                     };
+                    state.direction = Some(direction);
+                    self.last_move_time = current_time;
+                    return direction;
+                }
+
+                // Resting the finger after a swipe keeps moving the piece in that direction
+                if let Some(direction) = state.direction {
+                    let resting = current_time - state.last_finger_move > INPUT.move_cooldown_hold;
+                    if resting && current_time - self.last_move_time > INPUT.move_cooldown_hold {
+                        self.last_move_time = current_time;
+                        return direction;
+                    }
+                    return InputState::None;
                 }
 
                 // Holding the finger still drops the piece, a slow swipe must not
                 let still = (x - state.start_x).abs() < step * 0.3;
-                if !state.moved && still && current_time - state.start_time > INPUT.hold_threshold {
+                if still && current_time - state.start_time > INPUT.hold_threshold {
                     state.dropping = true;
                     return InputState::Drop;
                 }
@@ -158,7 +180,7 @@ impl InputHandler {
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 if let Some(state) = self.touch.take() {
                     let tap = current_time - state.start_time < INPUT.touch_threshold;
-                    if tap && !state.moved && !state.dropping {
+                    if tap && state.direction.is_none() && !state.dropping {
                         return InputState::Rotate;
                     }
                 }

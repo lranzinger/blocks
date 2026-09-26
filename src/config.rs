@@ -35,6 +35,8 @@ pub struct InputConfig {
     pub hold_threshold: Time,
     pub move_cooldown: Time,
     pub touch_threshold: Time,
+    /// Interval of the repeated moves while the finger rests after a swipe
+    pub move_cooldown_hold: Time,
 }
 
 pub const INPUT: InputConfig = InputConfig {
@@ -42,6 +44,7 @@ pub const INPUT: InputConfig = InputConfig {
     hold_threshold: Time(0.2),
     move_cooldown: Time(0.1),
     touch_threshold: Time(0.15),
+    move_cooldown_hold: Time(0.1),
 };
 
 pub struct UiText {

@@ -27,8 +27,8 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new() -> Self {
-        let font = FontCache::new();
         let screen = ScreenConfig::new();
+        let font = FontCache::new(&screen);
 
         let mut renderer = Self {
             game_field: render_target(0, 0),
@@ -49,7 +49,7 @@ impl Renderer {
         let current_size = (screen_width(), screen_height());
         if self.screen.size != current_size || self.screen.dpi_scale != screen_dpi_scale() {
             self.screen = ScreenConfig::new();
-            self.font.update();
+            self.font.update(&self.screen);
             self.text.update(&self.font);
             self.set_render_targets();
         }
@@ -182,10 +182,13 @@ impl Renderer {
         let pos_x = offset_x + x * size;
         let pos_y = offset_y + y * size;
 
-        // Whole pixel insets, so the block rasterizes identically on screen and in the
-        // board render target
-        let shading_inset = (size * 0.1).round();
-        let outline_width = (size * 0.05).round().max(1.0);
+        // Whole physical pixel insets, so the block rasterizes identically on screen and in
+        // the board render target
+        let shading_inset = self.screen.snap(size * 0.1);
+        let outline_width = self
+            .screen
+            .snap(size * 0.05)
+            .max(1.0 / self.screen.dpi_scale);
 
         // Draw block face
         draw_rectangle(pos_x, pos_y, size, size, color);

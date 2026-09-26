@@ -16,19 +16,21 @@ impl ScreenConfig {
     pub fn new() -> Self {
         let screen_width = screen_width();
         let screen_height = screen_height();
+        let dpi_scale = screen_dpi_scale();
 
         // Calculate optimal block size, 95% of available space.
-        // Whole pixels keep the cached board and the falling piece pixel aligned.
+        // Sizes and positions are snapped to whole physical pixels, so the cached board and
+        // the falling piece rasterize identically, also with fractional scaling like 150%.
         let scale_x = screen_width / BOARD.width as f32;
         let scale_y = screen_height / BOARD.height as f32;
-        let block_size = (scale_x.min(scale_y) * 0.95).floor().max(1.0);
+        let block_size = (scale_x.min(scale_y) * 0.95 * dpi_scale).floor().max(1.0) / dpi_scale;
 
         let field_width = BOARD.width as f32 * block_size;
         let field_height = BOARD.height as f32 * block_size;
 
         // Center the game field
-        let offset_x = ((screen_width - field_width) / 2.0).round();
-        let offset_y = ((screen_height - field_height) / 2.0).round();
+        let offset_x = ((screen_width - field_width) / 2.0 * dpi_scale).round() / dpi_scale;
+        let offset_y = ((screen_height - field_height) / 2.0 * dpi_scale).round() / dpi_scale;
 
         Self {
             block_size,
@@ -37,7 +39,12 @@ impl ScreenConfig {
             field_width,
             field_height,
             size: (screen_width, screen_height),
-            dpi_scale: screen_dpi_scale(),
+            dpi_scale,
         }
+    }
+
+    /// Rounds a length to whole physical pixels
+    pub fn snap(&self, length: f32) -> f32 {
+        (length * self.dpi_scale).round() / self.dpi_scale
     }
 }
