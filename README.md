@@ -4,31 +4,36 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 
 ## Features
 
-- Classic Tetris gameplay mechanics
-- Responsive design that adapts to window size
-- Touch controls for mobile devices
-- Keyboard controls for desktop
-- Progressive level system
-- High score tracking with browser storage
-- Visual effects for line clears
-- 7-bag randomizer, every piece appears once per seven pieces
-- Debug mode with FPS counter
+- Modern Tetris rules: SRS rotation with wall kicks, lock delay, 7-bag randomizer
+- Hold piece, preview of the next three pieces and a ghost piece showing where the piece lands
+- Scoring with soft and hard drop points, combos and back-to-back tetris bonus
+- A new level every 10 lines, getting faster up to level 15
+- Line clear animation with particles, score popups and screen shake on a tetris
+- Layouts for portrait phones and landscape screens, sharp at any display scaling
+- Pause button, automatic pause when switching tabs
+- High score stored in the browser, vibration on supported phones
 
 ## Controls
 
 ### Touch Controls
 
-- Swipe left/right: Move piece
-- Swipe and hold: Keep moving in that direction
-- Tap once: Rotate piece
-- Hold: Drop piece
+- Swipe left/right: Move piece, keep the finger down to keep moving
+- Tap: Rotate piece
+- Hold the finger still or drag down slowly: Drop faster
+- Flick down: Hard drop
+- Flick up: Hold piece
+- Pause button in the top right corner
 
 ### Keyboard Controls
 
 - Left/Right or A/D: Move piece
-- Up/W: Rotate piece
-- Down/S: Drop piece faster
+- Up, W or X: Rotate clockwise
+- Z, Y or Ctrl: Rotate counter-clockwise
+- Down/S: Drop faster
 - Space: Hard drop
+- C or Shift: Hold piece
+- P or Escape: Pause
+- Enter: Start, resume or restart
 
 ## Build Instructions
 

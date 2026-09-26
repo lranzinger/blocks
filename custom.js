@@ -7,6 +7,11 @@ let storage = function (importObject) {
   importObject.env.js_save_high_score = function (score) {
     localStorage.setItem('blocks_high_score', score.toString());
   };
+
+  importObject.env.js_vibrate = function (milliseconds) {
+    if (navigator.vibrate) {
+      navigator.vibrate(milliseconds);
+    }
+  };
 };
 miniquad_add_plugin({ register_plugin: storage, version: 1, name: "storage" });
-

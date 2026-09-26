@@ -1,44 +1,181 @@
 use crate::{
-    config::{BOARD, LEVEL_CONFIGS, SCORE, TIMING},
-    input::InputState,
-    state::{GameState, GameStatus},
+    config::{BOARD, SCORE, TIMING, fall_interval},
     storage,
-    tetromino::{RotationState, Tetromino},
+    tetromino::{Bag, Rotation, Tetromino},
 };
 
-/// Fall interval while the drop input is held
-const SOFT_DROP_INTERVAL: f32 = 0.05;
+const WIDTH: usize = BOARD.width as usize;
+const TOTAL_HEIGHT: usize = BOARD.total_height() as usize;
+const PREVIEW_COUNT: usize = 3;
 
-/// Horizontal offsets tried when a rotation collides (simple wall kick)
-const KICK_OFFSETS: [i32; 5] = [0, -1, 1, -2, 2];
+/// All rows including the hidden ones above the visible field
+pub type Board = [[Option<Tetromino>; WIDTH]; TOTAL_HEIGHT];
 
-fn rotated_shape(typ: Tetromino, rotation: RotationState) -> [(i32, i32); 4] {
-    let shape = typ.shape();
-    let pivot = (1, 1);
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GameStatus {
+    Start,
+    Playing,
+    Paused,
+    GameOver,
+}
 
-    let moved_center = shape.map(|(x, y)| (x - pivot.0, y - pivot.1));
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Piece {
+    pub kind: Tetromino,
+    pub rotation: Rotation,
+    /// Position of the bounding box on the board
+    pub x: i32,
+    pub y: i32,
+}
 
-    match rotation {
-        RotationState::Zero => shape,
-        RotationState::Right => moved_center.map(|(x, y)| (-y + pivot.0, x + pivot.1)),
-        RotationState::Two => moved_center.map(|(x, y)| (-x + pivot.0, -y + pivot.1)),
-        RotationState::Left => moved_center.map(|(x, y)| (y + pivot.0, -x + pivot.1)),
+impl Piece {
+    fn spawn(kind: Tetromino) -> Self {
+        Self {
+            kind,
+            rotation: Rotation::Zero,
+            x: 3,
+            y: 0,
+        }
+    }
+
+    /// Board positions of the four blocks
+    pub fn cells(&self) -> [(i32, i32); 4] {
+        self.kind
+            .cells(self.rotation)
+            .map(|(x, y)| (self.x + x, self.y + y))
     }
 }
 
-impl GameState {
-    pub fn start(&mut self) {
-        self.dummy_board = None;
-        self.status = GameStatus::Playing;
-        self.spawn_piece();
-        self.events.board_changed = true;
+/// Set of board rows stored as bit mask
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct Rows(u32);
+
+impl Rows {
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
     }
 
-    pub fn restart(&mut self) {
-        let high_score = self.score.highest;
-        *self = GameState::new();
-        self.score.highest = high_score;
-        self.start();
+    pub fn len(&self) -> u32 {
+        self.0.count_ones()
+    }
+
+    pub fn contains(&self, row: usize) -> bool {
+        self.0 & (1 << row) != 0
+    }
+
+    pub fn insert(&mut self, row: usize) {
+        self.0 |= 1 << row;
+    }
+}
+
+pub struct LineClear {
+    pub rows: Rows,
+    /// Progress of the animation from 0 to 1
+    pub progress: f32,
+}
+
+/// Things that happened during an update, used for effects and sounds
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Locked {
+        cells: [(i32, i32); 4],
+    },
+    HardDrop {
+        kind: Tetromino,
+        cells: [(i32, i32); 4],
+        rows: i32,
+    },
+    LinesCleared {
+        rows: Rows,
+        points: u32,
+        back_to_back: bool,
+        combo: u32,
+    },
+    LevelUp(u32),
+    GameOver {
+        new_record: bool,
+    },
+}
+
+pub struct GameState {
+    pub status: GameStatus,
+    pub board: Board,
+    pub piece: Piece,
+    pub hold: Option<Tetromino>,
+    hold_used: bool,
+    pub next: [Tetromino; PREVIEW_COUNT],
+    bag: Bag,
+    pub score: u32,
+    pub high_score: u32,
+    pub lines: u32,
+    pub level: u32,
+    /// Consecutive pieces clearing lines, -1 without a running combo
+    combo: i32,
+    /// The last line clear was a tetris
+    back_to_back: bool,
+    pub soft_drop: bool,
+    fall_timer: f32,
+    lock_timer: f32,
+    lock_resets: u32,
+    lowest_y: i32,
+    pub line_clear: Option<LineClear>,
+    pub new_record: bool,
+    events: Vec<Event>,
+    /// Incremented on every change of the locked blocks
+    pub board_version: u32,
+}
+
+impl GameState {
+    pub fn new(high_score: u32) -> Self {
+        let mut bag = Bag::new();
+        let next = [bag.next(), bag.next(), bag.next()];
+        Self {
+            status: GameStatus::Start,
+            board: [[None; WIDTH]; TOTAL_HEIGHT],
+            // Placeholder until the first piece spawns
+            piece: Piece::spawn(Tetromino::O),
+            hold: None,
+            hold_used: false,
+            next,
+            bag,
+            score: 0,
+            high_score,
+            lines: 0,
+            level: 1,
+            combo: -1,
+            back_to_back: false,
+            soft_drop: false,
+            fall_timer: 0.0,
+            lock_timer: 0.0,
+            lock_resets: 0,
+            lowest_y: 0,
+            line_clear: None,
+            new_record: false,
+            events: Vec::new(),
+            board_version: 0,
+        }
+    }
+
+    pub fn start(&mut self) {
+        *self = GameState::new(self.high_score);
+        self.status = GameStatus::Playing;
+        self.spawn_next();
+    }
+
+    pub fn toggle_pause(&mut self) {
+        self.status = match self.status {
+            GameStatus::Playing => GameStatus::Paused,
+            GameStatus::Paused => GameStatus::Playing,
+            status => status,
+        };
+    }
+
+    pub fn take_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+
+    fn accepts_input(&self) -> bool {
+        self.status == GameStatus::Playing && self.line_clear.is_none()
     }
 
     /// Advances the game by `delta` seconds
@@ -47,246 +184,301 @@ impl GameState {
             return;
         }
 
-        // Handle line clear animation, the game is paused meanwhile
-        if !self.board.flashing_lines.is_empty() {
-            self.timing.line_clear_timer -= delta;
-            if self.timing.line_clear_timer <= 0.0 {
-                self.remove_flashing_lines();
-                self.spawn_piece();
+        if let Some(clear) = &mut self.line_clear {
+            clear.progress += delta / TIMING.line_clear;
+            if clear.progress >= 1.0 {
+                let rows = clear.rows;
+                self.line_clear = None;
+                self.remove_rows(rows);
+                self.spawn_next();
             }
             return;
         }
 
-        // Handle automatic piece falling
-        self.timing.fall_timer += delta;
-        if self.timing.fall_timer >= self.timing.fall_interval {
-            // Keep the remainder for a steady speed, but never catch up more than one step
-            self.timing.fall_timer =
-                (self.timing.fall_timer - self.timing.fall_interval).min(self.timing.fall_interval);
-            if self.can_move(0, 1) {
-                self.piece.position.1 += 1;
-            } else {
-                self.settle_piece();
+        let interval = if self.soft_drop {
+            (fall_interval(self.level) / TIMING.soft_drop_factor).min(TIMING.max_soft_drop_interval)
+        } else {
+            fall_interval(self.level)
+        };
+
+        self.fall_timer += delta;
+        // Several rows per frame are possible at high speeds
+        let mut steps = 0;
+        while self.fall_timer >= interval && steps < BOARD.total_height() {
+            self.fall_timer -= interval;
+            steps += 1;
+            if !self.try_move(0, 1) {
+                self.fall_timer = 0.0;
+                break;
+            }
+            if self.soft_drop {
+                self.score += SCORE.soft_drop_per_row;
+            }
+        }
+
+        if self.is_grounded() {
+            self.lock_timer += delta;
+            if self.lock_timer >= TIMING.lock_delay {
+                self.lock();
             }
         }
     }
 
-    pub fn handle_input(&mut self, input: InputState) {
-        if self.status != GameStatus::Playing || !self.board.flashing_lines.is_empty() {
+    pub fn move_horizontal(&mut self, dx: i32) -> bool {
+        if !self.accepts_input() || !self.try_move(dx, 0) {
+            return false;
+        }
+        self.on_manipulated();
+        true
+    }
+
+    pub fn rotate(&mut self, clockwise: bool) -> bool {
+        if !self.accepts_input() {
+            return false;
+        }
+        let from = self.piece.rotation;
+        let to = if clockwise {
+            from.clockwise()
+        } else {
+            from.counter_clockwise()
+        };
+
+        for (dx, dy) in self.piece.kind.kicks(from, to) {
+            let candidate = Piece {
+                rotation: to,
+                x: self.piece.x + dx,
+                y: self.piece.y + dy,
+                ..self.piece
+            };
+            if self.fits(&candidate) {
+                self.piece = candidate;
+                self.on_manipulated();
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn hard_drop(&mut self) {
+        if !self.accepts_input() {
             return;
         }
-
-        self.timing.fall_interval = LEVEL_CONFIGS[self.level.current].fall_interval;
-
-        match input {
-            InputState::MoveLeft => {
-                if self.can_move(-1, 0) {
-                    self.piece.position.0 -= 1;
-                }
-            }
-            InputState::MoveRight => {
-                if self.can_move(1, 0) {
-                    self.piece.position.0 += 1;
-                }
-            }
-            InputState::Rotate => self.try_rotation(),
-            InputState::Drop => self.timing.fall_interval = SOFT_DROP_INTERVAL,
-            InputState::HardDrop => self.hard_drop(),
-            InputState::None => (),
-        }
+        let rows = self.drop_distance();
+        self.piece.y += rows;
+        self.score += rows as u32 * SCORE.hard_drop_per_row;
+        self.events.push(Event::HardDrop {
+            kind: self.piece.kind,
+            cells: self.piece.cells(),
+            rows,
+        });
+        self.lock();
     }
 
-    fn spawn_piece(&mut self) {
-        self.piece.typ = self.bag.next();
-        self.piece.rotation = RotationState::Zero;
-        self.piece.rotated = self.piece.typ.shape();
-
-        let shape = self.piece.rotated;
-        let piece_width = shape.iter().map(|(x, _)| x).max().unwrap()
-            - shape.iter().map(|(x, _)| x).min().unwrap()
-            + 1;
-        self.piece.position = (BOARD.width / 2 - piece_width / 2, -1);
-        self.timing.fall_timer = 0.0;
-
-        // Block out: the new piece overlaps with existing blocks
-        if !self.can_move(0, 0) {
-            self.end_game();
+    /// Swaps the current piece with the held one, once per piece
+    pub fn hold(&mut self) {
+        if !self.accepts_input() || self.hold_used {
+            return;
         }
+        let current = self.piece.kind;
+        match self.hold.replace(current) {
+            Some(held) => self.spawn(held),
+            None => self.spawn_next(),
+        }
+        self.hold_used = true;
     }
 
-    fn can_move(&self, dx: i32, dy: i32) -> bool {
-        self.piece.rotated.iter().all(|&(x, y)| {
-            let new_x = self.piece.position.0 + x + dx;
-            let new_y = self.piece.position.1 + y + dy;
-            (0..BOARD.width).contains(&new_x)
-                && new_y < BOARD.height
-                && (new_y < 0 || self.board.cells[new_y as usize][new_x as usize].is_none())
+    /// Rows the current piece can fall until it lands
+    pub fn drop_distance(&self) -> i32 {
+        let mut rows = 0;
+        while self.fits(&Piece {
+            y: self.piece.y + rows + 1,
+            ..self.piece
+        }) {
+            rows += 1;
+        }
+        rows
+    }
+
+    fn fits(&self, piece: &Piece) -> bool {
+        piece.cells().iter().all(|&(x, y)| {
+            (0..BOARD.width).contains(&x)
+                && (0..BOARD.total_height()).contains(&y)
+                && self.board[y as usize][x as usize].is_none()
         })
     }
 
-    fn hard_drop(&mut self) {
-        while self.can_move(0, 1) {
-            self.piece.position.1 += 1;
+    fn try_move(&mut self, dx: i32, dy: i32) -> bool {
+        let moved = Piece {
+            x: self.piece.x + dx,
+            y: self.piece.y + dy,
+            ..self.piece
+        };
+        if !self.fits(&moved) {
+            return false;
         }
-        self.settle_piece();
+        self.piece = moved;
+        if self.piece.y > self.lowest_y {
+            // Reaching a new lowest row gives the full lock delay again
+            self.lowest_y = self.piece.y;
+            self.lock_resets = 0;
+            self.lock_timer = 0.0;
+        }
+        true
     }
 
-    /// Writes the current piece into the board.
-    /// Returns `true` if part of the piece is above the visible field (lock out).
-    fn lock_piece(&mut self) -> bool {
-        let mut locked_out = false;
-        for &(x, y) in &self.piece.rotated {
-            let board_x = self.piece.position.0 + x;
-            let board_y = self.piece.position.1 + y;
-            if board_y >= 0 {
-                self.board.cells[board_y as usize][board_x as usize] = Some(self.piece.typ.color());
-            } else {
-                locked_out = true;
-            }
-        }
-        self.events.piece_locked = true;
-        self.events.board_changed = true;
-        locked_out
+    fn is_grounded(&self) -> bool {
+        !self.fits(&Piece {
+            y: self.piece.y + 1,
+            ..self.piece
+        })
     }
 
-    fn settle_piece(&mut self) {
-        if self.lock_piece() {
+    /// Moving or rotating a grounded piece restarts the lock delay a limited number of times
+    fn on_manipulated(&mut self) {
+        if self.lock_resets < TIMING.max_lock_resets {
+            self.lock_timer = 0.0;
+            self.lock_resets += 1;
+        }
+    }
+
+    fn spawn_next(&mut self) {
+        let kind = self.next[0];
+        self.next.rotate_left(1);
+        self.next[PREVIEW_COUNT - 1] = self.bag.next();
+        self.spawn(kind);
+        self.hold_used = false;
+    }
+
+    fn spawn(&mut self, kind: Tetromino) {
+        self.piece = Piece::spawn(kind);
+        self.fall_timer = 0.0;
+        self.lock_timer = 0.0;
+        self.lock_resets = 0;
+        self.lowest_y = self.piece.y;
+
+        // Block out: no room for the new piece
+        if !self.fits(&self.piece) {
+            self.end_game();
+            return;
+        }
+        // Enter the visible field right away
+        self.try_move(0, 1);
+    }
+
+    fn lock(&mut self) {
+        let cells = self.piece.cells();
+        for &(x, y) in &cells {
+            self.board[y as usize][x as usize] = Some(self.piece.kind);
+        }
+        self.board_version += 1;
+        self.events.push(Event::Locked { cells });
+
+        // Lock out: the piece is completely above the visible field
+        if cells.iter().all(|&(_, y)| y < BOARD.hidden) {
             self.end_game();
             return;
         }
 
-        self.clear_lines();
-        // With cleared lines the next piece spawns after the flash animation
-        if self.board.flashing_lines.is_empty() {
-            self.spawn_piece();
+        let mut rows = Rows::default();
+        for (y, row) in self.board.iter().enumerate() {
+            if row.iter().all(Option::is_some) {
+                rows.insert(y);
+            }
         }
+
+        if rows.is_empty() {
+            self.combo = -1;
+            self.spawn_next();
+        } else {
+            self.score_lines(rows);
+            self.line_clear = Some(LineClear {
+                rows,
+                progress: 0.0,
+            });
+        }
+    }
+
+    fn score_lines(&mut self, rows: Rows) {
+        let count = rows.len();
+        let tetris = count == 4;
+        let back_to_back = tetris && self.back_to_back;
+        self.back_to_back = tetris;
+        self.combo += 1;
+
+        let mut points = SCORE.lines[count as usize - 1] * self.level;
+        if back_to_back {
+            points += points / 2;
+        }
+        points += SCORE.combo * self.combo as u32 * self.level;
+        self.score += points;
+        self.events.push(Event::LinesCleared {
+            rows,
+            points,
+            back_to_back,
+            combo: self.combo as u32,
+        });
+
+        self.lines += count;
+        let level = self.lines / TIMING.lines_per_level + 1;
+        if level > self.level {
+            self.level = level;
+            self.events.push(Event::LevelUp(level));
+        }
+    }
+
+    fn remove_rows(&mut self, rows: Rows) {
+        let mut new_board = [[None; WIDTH]; TOTAL_HEIGHT];
+        let mut target = TOTAL_HEIGHT;
+        for y in (0..TOTAL_HEIGHT).rev() {
+            if !rows.contains(y) {
+                target -= 1;
+                new_board[target] = self.board[y];
+            }
+        }
+        self.board = new_board;
+        self.board_version += 1;
     }
 
     fn end_game(&mut self) {
-        let last_highscore = storage::get_high_score();
-        if self.score.highest > last_highscore {
-            storage::update_high_score(self.score.highest);
-        }
         self.status = GameStatus::GameOver;
-    }
-
-    fn clear_lines(&mut self) {
-        for (y, row) in self.board.cells.iter().enumerate() {
-            if row.iter().all(|cell| cell.is_some()) {
-                self.board.flashing_lines.insert(y);
-            }
+        self.new_record = self.score > self.high_score;
+        if self.new_record {
+            self.high_score = self.score;
+            storage::update_high_score(self.score);
         }
-
-        let lines_cleared = self.board.flashing_lines.len();
-        if lines_cleared == 0 {
-            return;
-        }
-
-        // Start line clear animation
-        self.timing.line_clear_timer = TIMING.line_clearing;
-
-        self.score.current += self.calculate_score(lines_cleared);
-        self.score.highest = self.score.highest.max(self.score.current);
-        self.level.total_lines_cleared += lines_cleared;
-        self.update_level();
-    }
-
-    fn remove_flashing_lines(&mut self) {
-        let mut new_board = [[None; BOARD.width as usize]; BOARD.height as usize];
-        let mut new_row = BOARD.height as usize;
-
-        // Copy the board from the bottom up, skipping the cleared lines
-        for y in (0..BOARD.height as usize).rev() {
-            if !self.board.flashing_lines.contains(y) {
-                new_row -= 1;
-                new_board[new_row] = self.board.cells[y];
-            }
-        }
-
-        self.board.cells = new_board;
-        self.board.flashing_lines.clear();
-        self.events.board_changed = true;
-    }
-
-    fn try_rotation(&mut self) {
-        if self.piece.typ == Tetromino::O {
-            return;
-        }
-
-        let original_x = self.piece.position.0;
-        let original_rotation = self.piece.rotation;
-
-        self.piece.rotation = self.piece.rotation.next();
-        self.piece.rotated = rotated_shape(self.piece.typ, self.piece.rotation);
-
-        for offset in KICK_OFFSETS {
-            self.piece.position.0 = original_x + offset;
-            if self.can_move(0, 0) {
-                return;
-            }
-        }
-
-        // Restore original position and rotation if no valid position found
-        self.piece.position.0 = original_x;
-        self.piece.rotation = original_rotation;
-        self.piece.rotated = rotated_shape(self.piece.typ, self.piece.rotation);
-    }
-
-    fn update_level(&mut self) {
-        let current_level = self.level.current;
-        if self.level.total_lines_cleared >= LEVEL_CONFIGS[current_level].lines_required
-            && current_level < LEVEL_CONFIGS.len() - 1
-        {
-            self.level.current = current_level + 1;
-        }
-    }
-
-    fn calculate_score(&self, lines_cleared: u32) -> u32 {
-        let base_score = match lines_cleared {
-            1 => SCORE.single,
-            2 => SCORE.double,
-            3 => SCORE.triple,
-            4 => SCORE.tetris,
-            _ => 0,
-        };
-
-        (base_score as f32 * LEVEL_CONFIGS[self.level.current].score_multiplier) as u32
-    }
-
-    /// Returns the events since the last call and resets them
-    pub fn take_events(&mut self) -> crate::state::Events {
-        std::mem::take(&mut self.events)
+        self.events.push(Event::GameOver {
+            new_record: self.new_record,
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{state::FlashingLines, tetromino::Bag};
-    use macroquad::color::GRAY;
 
-    const BOTTOM: usize = BOARD.height as usize - 1;
+    const BOTTOM: usize = TOTAL_HEIGHT - 1;
 
-    fn playing_state() -> GameState {
-        let mut state = GameState::new();
+    fn playing() -> GameState {
+        let mut state = GameState::new(0);
         state.start();
         state.take_events();
         state
     }
 
-    /// Replaces the current piece with a horizontal I piece at the given position
-    fn set_i_piece(state: &mut GameState, x: i32, y: i32) {
-        state.piece.typ = Tetromino::I;
-        state.piece.rotation = RotationState::Zero;
-        state.piece.rotated = Tetromino::I.shape();
-        state.piece.position = (x, y);
+    fn set_piece(state: &mut GameState, kind: Tetromino, rotation: Rotation, x: i32, y: i32) {
+        state.piece = Piece {
+            kind,
+            rotation,
+            x,
+            y,
+        };
+        state.lowest_y = y;
     }
 
-    /// Fills the given row except for the four cells starting at `gap_x`
-    fn fill_row_except_four(state: &mut GameState, row: usize, gap_x: usize) {
-        for x in 0..BOARD.width as usize {
-            if !(gap_x..gap_x + 4).contains(&x) {
-                state.board.cells[row][x] = Some(GRAY);
+    fn fill_row_except(state: &mut GameState, row: usize, gap: std::ops::Range<usize>) {
+        for x in 0..WIDTH {
+            if !gap.contains(&x) {
+                state.board[row][x] = Some(Tetromino::O);
             }
         }
     }
@@ -302,157 +494,233 @@ mod tests {
     }
 
     #[test]
-    fn flashing_lines_bit_mask() {
-        let mut lines = FlashingLines::default();
-        assert!(lines.is_empty());
-        lines.insert(0);
-        lines.insert(19);
-        assert!(lines.contains(0) && lines.contains(19) && !lines.contains(5));
-        assert_eq!(lines.len(), 2);
-        lines.clear();
-        assert!(lines.is_empty());
+    fn new_piece_enters_the_visible_field() {
+        let state = playing();
+        let top = state.piece.cells().iter().map(|&(_, y)| y).max().unwrap();
+        assert!(top >= BOARD.hidden);
     }
 
     #[test]
-    fn piece_stays_inside_the_walls() {
-        let mut state = playing_state();
-        for _ in 0..20 {
-            state.handle_input(InputState::MoveLeft);
-        }
-        let min_x = state
-            .piece
-            .rotated
-            .iter()
-            .map(|(x, _)| state.piece.position.0 + x)
-            .min()
-            .unwrap();
-        assert_eq!(min_x, 0);
+    fn preview_advances_on_spawn() {
+        let mut state = playing();
+        let expected = state.next[0];
+        state.hard_drop();
+        assert_eq!(state.piece.kind, expected);
     }
 
     #[test]
-    fn hard_drop_locks_piece_at_the_bottom() {
-        let mut state = playing_state();
-        set_i_piece(&mut state, 0, 0);
-        state.handle_input(InputState::HardDrop);
+    fn hard_drop_scores_rows_and_locks() {
+        let mut state = playing();
+        set_piece(&mut state, Tetromino::I, Rotation::Zero, 0, 0);
+        state.hard_drop();
 
-        assert!((0..4).all(|x| state.board.cells[BOTTOM][x].is_some()));
-        assert!(state.take_events().piece_locked);
+        assert!((0..4).all(|x| state.board[BOTTOM][x] == Some(Tetromino::I)));
+        let rows = BOTTOM as u32 - 1;
+        assert_eq!(state.score, rows * SCORE.hard_drop_per_row);
+        let events = state.take_events();
+        assert!(matches!(events[0], Event::HardDrop { .. }));
+        assert!(matches!(events[1], Event::Locked { .. }));
     }
 
     #[test]
-    fn cleared_line_is_scored_once_and_removed_after_animation() {
-        let mut state = playing_state();
-        fill_row_except_four(&mut state, BOTTOM, 0);
-        state.board.cells[BOTTOM - 1][9] = Some(GRAY);
-        set_i_piece(&mut state, 0, 0);
-        state.handle_input(InputState::HardDrop);
+    fn piece_locks_only_after_the_lock_delay() {
+        let mut state = playing();
+        set_piece(
+            &mut state,
+            Tetromino::O,
+            Rotation::Zero,
+            3,
+            BOTTOM as i32 - 1,
+        );
+        state.update(TIMING.lock_delay / 2.0);
+        assert!(state.board[BOTTOM].iter().all(Option::is_none));
 
-        assert_eq!(state.score.current, SCORE.single);
-        assert!(state.board.flashing_lines.contains(BOTTOM));
+        // Moving restarts the delay
+        assert!(state.move_horizontal(1));
+        state.update(TIMING.lock_delay * 0.75);
+        assert!(state.board[BOTTOM].iter().all(Option::is_none));
 
-        // Gravity and input are paused during the animation
-        let position = state.piece.position;
-        state.handle_input(InputState::HardDrop);
-        state.update(TIMING.line_clearing / 2.0);
-        assert_eq!(state.score.current, SCORE.single);
-        assert_eq!(state.piece.position, position);
-
-        // After the animation the row above moved down and a new piece spawned
-        state.update(TIMING.line_clearing);
-        assert!(state.board.flashing_lines.is_empty());
-        assert!(state.board.cells[BOTTOM][9].is_some());
-        assert!(state.board.cells[BOTTOM - 1].iter().all(|c| c.is_none()));
-        assert_eq!(state.piece.position.1, -1);
-        assert_eq!(state.level.total_lines_cleared, 1);
+        state.update(TIMING.lock_delay);
+        assert!(state.board[BOTTOM].iter().any(Option::is_some));
     }
 
     #[test]
-    fn four_lines_score_a_tetris() {
-        let mut state = playing_state();
-        for row in BOTTOM - 3..=BOTTOM {
-            for x in 0..BOARD.width as usize - 1 {
-                state.board.cells[row][x] = Some(GRAY);
+    fn lock_resets_are_limited() {
+        let mut state = playing();
+        set_piece(
+            &mut state,
+            Tetromino::O,
+            Rotation::Zero,
+            3,
+            BOTTOM as i32 - 1,
+        );
+        for i in 0..40 {
+            let dx = if i % 2 == 0 { 1 } else { -1 };
+            state.move_horizontal(dx);
+            state.update(TIMING.lock_delay * 0.6);
+            if state.board[BOTTOM].iter().any(Option::is_some) {
+                return;
             }
         }
-        // Vertical I piece in the last column
-        state.piece.typ = Tetromino::I;
-        state.piece.rotation = RotationState::Right;
-        state.piece.rotated = rotated_shape(Tetromino::I, RotationState::Right);
-        state.piece.position = (BOARD.width - 2, 0);
-        state.handle_input(InputState::HardDrop);
-
-        assert_eq!(state.score.current, SCORE.tetris);
-        assert_eq!(state.board.flashing_lines.len(), 4);
+        panic!("piece never locked");
     }
 
     #[test]
-    fn level_increases_after_enough_lines() {
-        let mut state = playing_state();
-        state.level.total_lines_cleared = LEVEL_CONFIGS[0].lines_required - 1;
-        fill_row_except_four(&mut state, BOTTOM, 0);
-        set_i_piece(&mut state, 0, 0);
-        state.handle_input(InputState::HardDrop);
+    fn single_line_clear_scores_and_removes_row_after_animation() {
+        let mut state = playing();
+        fill_row_except(&mut state, BOTTOM, 0..4);
+        state.board[BOTTOM - 1][9] = Some(Tetromino::T);
+        set_piece(&mut state, Tetromino::I, Rotation::Zero, 0, 0);
+        state.hard_drop();
+        let drop_points = state.score - SCORE.lines[0];
 
-        assert_eq!(state.level.current, 1);
+        assert!(state.line_clear.is_some());
+        assert_eq!(state.score, drop_points + SCORE.lines[0]);
+
+        // Input is ignored during the animation
+        let piece = state.piece;
+        state.hard_drop();
+        assert_eq!(state.piece, piece);
+
+        state.update(TIMING.line_clear * 1.1);
+        assert!(state.line_clear.is_none());
+        assert_eq!(state.board[BOTTOM][9], Some(Tetromino::T));
+        assert!(state.board[BOTTOM - 1].iter().all(Option::is_none));
+        assert_eq!(state.lines, 1);
     }
 
     #[test]
-    fn rotation_kicks_away_from_the_wall() {
-        let mut state = playing_state();
-        state.piece.typ = Tetromino::I;
-        state.piece.rotation = RotationState::Right;
-        state.piece.rotated = rotated_shape(Tetromino::I, RotationState::Right);
-        // Vertical I piece in the rightmost column
-        state.piece.position = (BOARD.width - 2, 5);
-        state.handle_input(InputState::Rotate);
+    fn back_to_back_tetris_and_combo_bonus() {
+        let mut state = playing();
+        let clear_tetris = |state: &mut GameState| {
+            for row in BOTTOM - 3..=BOTTOM {
+                fill_row_except(state, row, 9..10);
+            }
+            set_piece(state, Tetromino::I, Rotation::Right, 7, 0);
+            state.hard_drop();
+            state.update(TIMING.line_clear * 1.1);
+        };
 
-        assert!(matches!(state.piece.rotation, RotationState::Two));
+        clear_tetris(&mut state);
+        let events = state.take_events();
+        assert!(events.contains(&Event::LinesCleared {
+            rows: {
+                let mut rows = Rows::default();
+                (BOTTOM - 3..=BOTTOM).for_each(|row| rows.insert(row));
+                rows
+            },
+            points: SCORE.lines[3],
+            back_to_back: false,
+            combo: 0,
+        }));
+
+        clear_tetris(&mut state);
+        let points = state
+            .take_events()
+            .iter()
+            .find_map(|event| match event {
+                Event::LinesCleared {
+                    points,
+                    back_to_back: true,
+                    combo: 1,
+                    ..
+                } => Some(*points),
+                _ => None,
+            })
+            .expect("back to back tetris with combo");
+        assert_eq!(points, SCORE.lines[3] * 3 / 2 + SCORE.combo);
+    }
+
+    #[test]
+    fn level_increases_every_ten_lines() {
+        let mut state = playing();
+        state.lines = TIMING.lines_per_level - 1;
+        fill_row_except(&mut state, BOTTOM, 0..4);
+        set_piece(&mut state, Tetromino::I, Rotation::Zero, 0, 0);
+        state.hard_drop();
+
+        assert_eq!(state.level, 2);
+        assert!(state.take_events().contains(&Event::LevelUp(2)));
+    }
+
+    #[test]
+    fn hold_swaps_once_per_piece() {
+        let mut state = playing();
+        let first = state.piece.kind;
+        let second = state.next[0];
+        state.hold();
+        assert_eq!(state.hold, Some(first));
+        assert_eq!(state.piece.kind, second);
+
+        // Second hold for the same piece is ignored
+        state.hold();
+        assert_eq!(state.piece.kind, second);
+
+        state.hard_drop();
+        state.hold();
+        assert_eq!(state.piece.kind, first);
+    }
+
+    #[test]
+    fn rotation_kicks_off_the_wall() {
+        let mut state = playing();
+        // Vertical I piece against the right wall
+        set_piece(&mut state, Tetromino::I, Rotation::Right, 7, 5);
+        assert!(state.rotate(true));
         assert!(
             state
                 .piece
-                .rotated
+                .cells()
                 .iter()
-                .all(|(x, _)| (0..BOARD.width).contains(&(state.piece.position.0 + x)))
+                .all(|&(x, _)| (0..BOARD.width).contains(&x))
         );
     }
 
     #[test]
-    fn locking_above_the_field_ends_the_game() {
-        let mut state = playing_state();
-        for row in 0..BOARD.height as usize {
-            state.board.cells[row][0] = Some(GRAY);
+    fn counter_clockwise_rotation_reverses_clockwise() {
+        let mut state = playing();
+        set_piece(&mut state, Tetromino::T, Rotation::Zero, 3, 8);
+        assert!(state.rotate(true));
+        assert!(state.rotate(false));
+        assert_eq!(state.piece.rotation, Rotation::Zero);
+        assert_eq!((state.piece.x, state.piece.y), (3, 8));
+    }
+
+    #[test]
+    fn soft_drop_falls_faster_and_scores() {
+        let mut state = playing();
+        let start_y = state.piece.y;
+        state.soft_drop = true;
+        for _ in 0..5 {
+            state.update(TIMING.max_soft_drop_interval);
         }
-        state.board.cells[0][0] = None;
-        state.board.cells[1][0] = None;
-        state.piece.typ = Tetromino::I;
-        state.piece.rotation = RotationState::Right;
-        state.piece.rotated = rotated_shape(Tetromino::I, RotationState::Right);
-        state.piece.position = (-1, -2);
-        state.handle_input(InputState::HardDrop);
+        assert!(state.piece.y >= start_y + 9);
+        assert!(state.score >= 9 * SCORE.soft_drop_per_row);
+    }
+
+    #[test]
+    fn blocked_spawn_ends_the_game_and_keeps_record() {
+        let mut state = playing();
+        state.score = 1234;
+        for row in 0..TOTAL_HEIGHT {
+            fill_row_except(&mut state, row, 0..1);
+        }
+        state.hard_drop();
 
         assert_eq!(state.status, GameStatus::GameOver);
+        assert!(state.new_record);
+        assert_eq!(state.high_score, state.score);
     }
 
     #[test]
-    fn soft_drop_falls_faster() {
-        let mut state = playing_state();
-        let start_y = state.piece.position.1;
-        for _ in 0..10 {
-            state.handle_input(InputState::Drop);
-            state.update(SOFT_DROP_INTERVAL);
-        }
-        assert_eq!(state.piece.position.1, start_y + 10);
-    }
-
-    #[test]
-    fn restart_keeps_high_score() {
-        let mut state = playing_state();
-        state.score.current = 500;
-        state.score.highest = 500;
-        state.restart();
-
-        assert_eq!(state.score.current, 0);
-        assert_eq!(state.score.highest, 500);
+    fn pause_stops_the_game() {
+        let mut state = playing();
+        let piece = state.piece;
+        state.toggle_pause();
+        state.update(10.0);
+        assert!(!state.move_horizontal(1));
+        assert_eq!(state.piece, piece);
+        state.toggle_pause();
         assert_eq!(state.status, GameStatus::Playing);
     }
 }
