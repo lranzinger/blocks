@@ -15,7 +15,7 @@ use crate::{
 const BACKGROUND_TOP: Color = Color::new(0.043, 0.055, 0.118, 1.0);
 const BACKGROUND_BOTTOM: Color = Color::new(0.102, 0.055, 0.18, 1.0);
 const BOARD_FILL: Color = Color::new(0.035, 0.047, 0.094, 1.0);
-const GRID: Color = Color::new(0.09, 0.11, 0.2, 1.0);
+const GRID: Color = Color::new(0.17, 0.2, 0.33, 1.0);
 const FRAME: Color = Color::new(0.2, 0.24, 0.4, 1.0);
 const PANEL_FILL: Color = Color::new(0.06, 0.075, 0.15, 1.0);
 const MUTED: Color = Color::new(0.55, 0.6, 0.78, 1.0);
@@ -120,11 +120,14 @@ impl Renderer {
             FRAME,
         );
         draw_rectangle(board.x, board.y, board.w, board.h, BOARD_FILL);
+        let line = self.layout.snap(block * 0.03).max(px);
         for x in 1..BOARD.width {
-            draw_rectangle(board.x + x as f32 * block, board.y, px, board.h, GRID);
+            let x = board.x + x as f32 * block - self.layout.snap(line / 2.0);
+            draw_rectangle(x, board.y, line, board.h, GRID);
         }
         for y in 1..BOARD.height {
-            draw_rectangle(board.x, board.y + y as f32 * block, board.w, px, GRID);
+            let y = board.y + y as f32 * block - self.layout.snap(line / 2.0);
+            draw_rectangle(board.x, y, board.w, line, GRID);
         }
 
         if state.status == GameStatus::Paused {

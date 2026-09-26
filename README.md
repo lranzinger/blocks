@@ -5,7 +5,7 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 ## Features
 
 - Modern Tetris rules: SRS rotation with wall kicks, lock delay, 7-bag randomizer
-- Hold piece and preview of the next three pieces
+- Reserve (hold) for one piece to swap in later, and a preview of the next three pieces
 - Scoring with soft and hard drop points, combos and back-to-back tetris bonus
 - A new level every 10 lines, getting faster up to level 15
 - Line clear animation with particles, score popups and screen shake on a tetris
@@ -21,7 +21,7 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 - Tap: Rotate piece
 - Hold the finger still or drag down slowly: Drop faster
 - Flick down: Hard drop
-- Flick up: Hold piece
+- Flick up: Put the piece into the reserve, or swap it with the reserved one
 - Pause button in the top right corner
 
 ### Keyboard Controls
@@ -31,7 +31,7 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 - Z, Y or Ctrl: Rotate counter-clockwise
 - Down/S: Drop faster
 - Space: Hard drop
-- C or Shift: Hold piece
+- C or Shift: Reserve piece
 - P or Escape: Pause
 - Enter: Start, resume or restart
 
