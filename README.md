@@ -19,6 +19,7 @@ A modern webassembly implementation of the classic Tetris game written in Rust u
 ### Touch Controls
 
 - Swipe left/right: Move piece, it follows the finger one cell at a time
+- Swipe and hold: Keep moving in that direction
 - Tap once: Rotate piece
 - Hold: Drop piece
 
