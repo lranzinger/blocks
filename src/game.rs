@@ -4,12 +4,13 @@ use crate::{
     effects::{Backdrop, Effects},
     input::{Action, InputHandler},
     logic::{Event, GameState, GameStatus},
+    platform,
     renderer::Renderer,
-    storage,
 };
 
-/// A frame taking longer than this means the tab was hidden or the game stalled
-const STALL_TIME: f32 = 0.3;
+/// Longest time step of the game logic. After a hitch on a slow device the game
+/// continues a little slower instead of jumping ahead.
+const MAX_DELTA: f32 = 0.1;
 /// Restarting is possible only after this delay, so a running swipe doesn't restart
 const RESTART_DELAY: f64 = 0.8;
 
@@ -25,7 +26,7 @@ pub struct Game {
 impl Game {
     pub fn new() -> Self {
         Self {
-            state: GameState::new(storage::get_high_score()),
+            state: GameState::new(platform::get_high_score()),
             renderer: Renderer::new(),
             input: InputHandler::new(),
             effects: Effects::new(),
@@ -39,10 +40,11 @@ impl Game {
         let now = get_time();
         let delta = get_frame_time();
 
-        if self.state.status == GameStatus::Playing && delta > STALL_TIME {
+        // Pause when the player switched to another tab or app
+        if platform::take_page_hidden() && self.state.status == GameStatus::Playing {
             self.state.toggle_pause();
         }
-        let delta = delta.min(0.1);
+        let delta = delta.min(MAX_DELTA);
 
         let input = self.input.update(self.renderer.layout.pause);
         self.state.soft_drop = input.soft_drop;
@@ -55,10 +57,10 @@ impl Game {
             match event {
                 Event::Locked { .. } => self.input.reset_touch_gesture(),
                 Event::LinesCleared { rows, .. } => {
-                    storage::vibrate(if rows.len() == 4 { 40 } else { 15 })
+                    platform::vibrate(if rows.len() == 4 { 40 } else { 15 })
                 }
                 Event::GameOver { .. } => {
-                    storage::vibrate(80);
+                    platform::vibrate(80);
                     self.game_over_time = now;
                 }
                 _ => {}

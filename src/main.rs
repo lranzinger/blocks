@@ -4,8 +4,8 @@ mod game;
 mod input;
 mod layout;
 mod logic;
+mod platform;
 mod renderer;
-mod storage;
 mod tetromino;
 mod text;
 
