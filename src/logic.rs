@@ -1,6 +1,6 @@
 use crate::{
     config::{BOARD, SCORE, TIMING, fall_interval},
-    storage,
+    platform,
     tetromino::{Bag, Rotation, Tetromino},
 };
 
@@ -444,7 +444,7 @@ impl GameState {
         self.new_record = self.score > self.high_score;
         if self.new_record {
             self.high_score = self.score;
-            storage::update_high_score(self.score);
+            platform::update_high_score(self.score);
         }
         self.events.push(Event::GameOver {
             new_record: self.new_record,
@@ -722,5 +722,73 @@ mod tests {
         assert_eq!(state.piece, piece);
         state.toggle_pause();
         assert_eq!(state.status, GameStatus::Playing);
+    }
+
+    /// Runs the game for `seconds` in steps of `delta`
+    fn run(state: &mut GameState, seconds: f32, delta: f32) {
+        let steps = (seconds / delta).round() as usize;
+        for _ in 0..steps {
+            state.update(delta);
+        }
+    }
+
+    /// Frame rates of fast devices, power saving mode and slow devices
+    const FRAME_TIMES: [f32; 3] = [1.0 / 60.0, 1.0 / 30.0, 0.1];
+
+    #[test]
+    fn fall_speed_does_not_depend_on_the_frame_rate() {
+        for soft_drop in [false, true] {
+            let rows: Vec<i32> = FRAME_TIMES
+                .iter()
+                .map(|&delta| {
+                    let mut state = playing();
+                    set_piece(&mut state, Tetromino::T, Rotation::Zero, 3, 2);
+                    state.soft_drop = soft_drop;
+                    let seconds = if soft_drop { 0.3 } else { 3.0 };
+                    run(&mut state, seconds, delta);
+                    state.piece.y
+                })
+                .collect();
+            let spread = rows.iter().max().unwrap() - rows.iter().min().unwrap();
+            assert!(spread <= 1, "soft drop {soft_drop}: rows {rows:?}");
+        }
+    }
+
+    #[test]
+    fn lock_delay_does_not_depend_on_the_frame_rate() {
+        for delta in FRAME_TIMES {
+            let mut state = playing();
+            set_piece(
+                &mut state,
+                Tetromino::O,
+                Rotation::Zero,
+                3,
+                BOTTOM as i32 - 1,
+            );
+            run(&mut state, TIMING.lock_delay * 0.8, delta);
+            assert!(
+                state.board[BOTTOM].iter().all(Option::is_none),
+                "locked too early at {delta}"
+            );
+            run(&mut state, TIMING.lock_delay * 0.4, delta);
+            assert!(
+                state.board[BOTTOM].iter().any(Option::is_some),
+                "not locked at {delta}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_clear_animation_does_not_depend_on_the_frame_rate() {
+        for delta in FRAME_TIMES {
+            let mut state = playing();
+            fill_row_except(&mut state, BOTTOM, 0..4);
+            set_piece(&mut state, Tetromino::I, Rotation::Zero, 0, 0);
+            state.hard_drop();
+            run(&mut state, TIMING.line_clear * 0.7, delta);
+            assert!(state.line_clear.is_some(), "finished too early at {delta}");
+            run(&mut state, TIMING.line_clear * 0.5, delta);
+            assert!(state.line_clear.is_none(), "not finished at {delta}");
+        }
     }
 }

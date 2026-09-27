@@ -15,20 +15,6 @@ pub struct FontSizes {
     pub label: f32,
 }
 
-impl FontSizes {
-    fn all(&self) -> [f32; 7] {
-        [
-            self.title,
-            self.heading,
-            self.value,
-            self.popup,
-            self.hint,
-            self.help,
-            self.label,
-        ]
-    }
-}
-
 /// Stats shown next to the board, each with its area
 pub struct StatSlots {
     pub score: Rect,
@@ -218,7 +204,52 @@ impl Layout {
                 hold.w * 0.8,
             ),
         };
-        text.prepare(&fonts.all());
+        text.prepare(fonts.title, &[TEXT.title]);
+        text.prepare(fonts.heading, &[TEXT.game_over, TEXT.paused]);
+        text.prepare(fonts.value, &[]);
+        text.prepare(
+            fonts.popup,
+            &[
+                &TEXT.clears.concat(),
+                TEXT.back_to_back,
+                TEXT.combo,
+                TEXT.level_up,
+            ],
+        );
+        text.prepare(
+            fonts.hint,
+            &[
+                TEXT.start_touch,
+                TEXT.start_keys,
+                TEXT.resume_touch,
+                TEXT.resume_keys,
+                TEXT.restart_touch,
+                TEXT.restart_keys,
+                TEXT.record,
+                TEXT.new_record,
+            ],
+        );
+        text.prepare(
+            fonts.help,
+            &[
+                &TEXT.touch_help.concat(),
+                &TEXT.key_help.concat(),
+                TEXT.level,
+                TEXT.lines,
+            ],
+        );
+        text.prepare(
+            fonts.label,
+            &[
+                TEXT.score,
+                TEXT.record,
+                TEXT.level,
+                TEXT.lines,
+                TEXT.hold,
+                TEXT.next,
+                TEXT.paused,
+            ],
+        );
 
         Self {
             size: (width, height),

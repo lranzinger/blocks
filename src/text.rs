@@ -6,12 +6,17 @@ use macroquad::{
 };
 
 const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/BlocksPixel-Regular.ttf");
-const REFERENCE_SIZE: f32 = 32.0;
+/// Size for measuring text widths. The pixel font scales linearly, a small size keeps the
+/// glyphs rasterized for measuring small.
+const REFERENCE_SIZE: f32 = 8.0;
+
+/// Characters of numbers and the "H" used for vertical centering, needed in every size
+const COMMON_CHARACTERS: &str = "0123456789.+x !H";
 
 pub struct Text {
     font: Font,
-    /// Physical font sizes whose glyphs are rasterized already
-    prepared: HashSet<u16>,
+    /// Characters already rasterized, per physical font size
+    prepared: HashSet<(u16, char)>,
 }
 
 impl Text {
@@ -25,12 +30,15 @@ impl Text {
     }
 
     /// The pixel font is drawn on an 8 pixel grid. Multiples of 8 physical pixels keep it
-    /// crisp, small sizes use multiples of 4 to stay readable. Rounds down.
+    /// crisp, small sizes use multiples of 4 to stay readable. Rounds down to whole logical
+    /// pixels, as macroquad takes font sizes as integers: fractional sizes would be drawn
+    /// in a different size than the prepared glyphs.
     pub fn pixel_size(size: f32) -> f32 {
         let dpi = screen_dpi_scale();
         let physical = size * dpi;
         let grid = if physical >= 32.0 { 8.0 } else { 4.0 };
-        ((physical / grid).floor() * grid).max(8.0) / dpi
+        let physical = ((physical / grid).floor() * grid).max(8.0);
+        (physical / dpi).floor().max((8.0 / dpi).ceil())
     }
 
     /// Largest pixel size up to `preferred` at which all texts fit into `max_width`
@@ -42,14 +50,20 @@ impl Text {
         Self::pixel_size(preferred.min(REFERENCE_SIZE * max_width / widest))
     }
 
-    /// Rasterizes all glyphs of the given sizes, so the glyph atlas does not grow while drawing
-    pub fn prepare(&mut self, sizes: &[f32]) {
-        let characters: Vec<char> = (' '..='~').chain("äöüÄÖÜß".chars()).collect();
-        for size in sizes {
-            let physical = (size * screen_dpi_scale()).ceil() as u16;
-            if self.prepared.insert(physical) {
-                self.font.populate_font_cache(&characters, physical);
-            }
+    /// Rasterizes the glyphs of the given texts up front, so the glyph atlas does not grow
+    /// while drawing. Only the characters used in each size, a large atlas is slow to upload
+    /// and takes a lot of memory on high resolution screens.
+    pub fn prepare(&mut self, size: f32, texts: &[&str]) {
+        // Same rounding as macroquad when drawing
+        let physical = (size as u16 as f32 * screen_dpi_scale()).ceil() as u16;
+        let characters: Vec<char> = texts
+            .iter()
+            .flat_map(|text| text.chars())
+            .chain(COMMON_CHARACTERS.chars())
+            .filter(|character| self.prepared.insert((physical, *character)))
+            .collect();
+        if !characters.is_empty() {
+            self.font.populate_font_cache(&characters, physical);
         }
     }
 

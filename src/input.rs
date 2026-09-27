@@ -2,7 +2,7 @@ use macroquad::{input::utils, prelude::*};
 
 use crate::{
     config::{KEYBOARD, TOUCH, Time},
-    storage,
+    platform,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -83,7 +83,7 @@ impl InputHandler {
             held_move: None,
             touch: None,
             event_subscriber: utils::register_input_subscriber(),
-            touch_mode: storage::is_touch_device(),
+            touch_mode: platform::is_touch_device(),
         }
     }
 
@@ -93,7 +93,7 @@ impl InputHandler {
         let mut input = FrameInput::default();
         self.keyboard(now, &mut input);
         self.mouse(pause_button, &mut input);
-        self.touch(now, pause_button, &mut input);
+        self.touch(pause_button, &mut input);
         input
     }
 
@@ -206,7 +206,9 @@ impl InputHandler {
 
     /// Handles every touch event in order. With a low frame rate, for example in power
     /// saving mode, starting, moving and lifting a finger can happen within one frame.
-    fn touch(&mut self, now: Time, pause_button: Rect, input: &mut FrameInput) {
+    fn touch(&mut self, pause_button: Rect, input: &mut FrameInput) {
+        // Touch times come from the browser events, on the same clock as `now`
+        let now = Time(platform::now());
         let mut events = TouchEvents::default();
         utils::repeat_all_miniquad_input(&mut events, self.event_subscriber);
         if !events.0.is_empty() {
@@ -215,6 +217,8 @@ impl InputHandler {
 
         let mut updated = false;
         for (phase, id, position) in events.0 {
+            // Exact time of the event instead of the frame time
+            let time = platform::next_touch_time(id).map_or(now, Time);
             // Touch positions are in physical pixels, the layout uses logical ones
             let position = position / screen_dpi_scale();
             match phase {
@@ -225,11 +229,11 @@ impl InputHandler {
                             id,
                             start: position,
                             position,
-                            start_time: now,
+                            start_time: time,
                             on_button: pause_button.contains(position),
                             direction: None,
-                            direction_time: now,
-                            last_move: now,
+                            direction_time: time,
+                            last_move: time,
                             flicked: false,
                             dropping: false,
                         });
@@ -238,18 +242,20 @@ impl InputHandler {
                 miniquad::TouchPhase::Moved => {
                     if let Some(state) = self.touch.as_mut().filter(|state| state.id == id) {
                         state.position = position;
-                        state.gesture(now, input);
+                        state.gesture(time, input);
                         updated = true;
                     }
                 }
                 miniquad::TouchPhase::Ended | miniquad::TouchPhase::Cancelled => {
                     if self.touch.as_ref().is_some_and(|state| state.id == id) {
                         let state = self.touch.take().expect("checked above");
-                        state.end(position, now, pause_button, input);
+                        state.end(position, time, pause_button, input);
                     }
                 }
             }
         }
+
+        platform::clear_touch_times();
 
         // Time based parts of the gesture, like resting the finger, also run without events
         if !updated && let Some(state) = &mut self.touch {
@@ -266,12 +272,13 @@ impl TouchState {
             }
             return;
         }
+        // Decided by the exact event times only. After a long frame the game may already
+        // have taken the resting finger for a hold before the lift arrived.
         let distance = (position - self.start).length();
         let tap = now - self.start_time < TOUCH.tap_time
             && distance < TOUCH.swipe_threshold
             && self.direction.is_none()
-            && !self.flicked
-            && !self.dropping;
+            && !self.flicked;
         if tap {
             input.actions.push(Action::Tap);
         }
@@ -284,15 +291,16 @@ impl TouchState {
         let delta = self.position - self.start;
         let elapsed = now - self.start_time;
 
-        // Quick vertical flick: down drops the piece, up holds it
+        // Quick vertical flick: down drops the piece, up holds it. Like taps, decided by the
+        // event times only, also if a hold was assumed during a long frame.
         let vertical = delta.y.abs() > 2.0 * delta.x.abs();
         if self.direction.is_none()
-            && !self.dropping
             && vertical
             && elapsed < TOUCH.flick_time
             && delta.y.abs() > TOUCH.flick_distance
         {
             self.flicked = true;
+            self.dropping = false;
             input.actions.push(if delta.y > 0.0 {
                 Action::HardDrop
             } else {
