@@ -1,122 +1,54 @@
+use crate::{
+    input::InputHandler,
+    renderer::Renderer,
+    state::{GameState, GameStatus},
+};
 use macroquad::prelude::*;
 
-use crate::{
-    effects::{Backdrop, Effects},
-    input::{Action, InputHandler},
-    logic::{Event, GameState, GameStatus},
-    platform,
-    renderer::Renderer,
-};
-
-/// Longest time step of the game logic. After a hitch on a slow device the game
-/// continues a little slower instead of jumping ahead.
-const MAX_DELTA: f32 = 0.1;
-/// Restarting is possible only after this delay, so a running swipe doesn't restart
-const RESTART_DELAY: f64 = 0.8;
-
 pub struct Game {
-    state: GameState,
-    renderer: Renderer,
-    input: InputHandler,
-    effects: Effects,
-    backdrop: Backdrop,
-    game_over_time: f64,
+    pub state: GameState,
+    pub renderer: Renderer,
+    pub input: InputHandler,
 }
 
 impl Game {
     pub fn new() -> Self {
         Self {
-            state: GameState::new(platform::get_high_score()),
+            state: GameState::new(),
             renderer: Renderer::new(),
             input: InputHandler::new(),
-            effects: Effects::new(),
-            backdrop: Backdrop::new(),
-            game_over_time: 0.0,
         }
     }
 
-    pub fn frame(&mut self) {
-        self.renderer.update_layout();
-        let now = get_time();
-        let delta = get_frame_time();
-
-        // Pause when the player switched to another tab or app
-        if platform::take_page_hidden() && self.state.status == GameStatus::Playing {
-            self.state.toggle_pause();
-        }
-        let delta = delta.min(MAX_DELTA);
-
-        let input = self.input.update(self.renderer.layout.pause);
-        self.state.soft_drop = input.soft_drop;
-        for action in input.actions {
-            self.handle(action, now);
-        }
-
-        self.state.update(delta);
-        for event in self.state.take_events() {
-            match event {
-                Event::Locked { .. } => self.input.reset_touch_gesture(),
-                Event::LinesCleared { rows, .. } => {
-                    platform::vibrate(if rows.len() == 4 { 40 } else { 15 })
-                }
-                Event::GameOver { .. } => {
-                    platform::vibrate(80);
-                    self.game_over_time = now;
-                }
-                _ => {}
-            }
-            self.effects.handle(&event, &self.state.board);
-        }
-
-        self.effects.update(delta);
-        if self.state.status == GameStatus::Start {
-            self.backdrop.update(delta);
-        }
-
-        let touch = self.input.touch_mode;
-        self.renderer
-            .draw(&self.state, &self.effects, &self.backdrop, touch, now);
-    }
-
-    fn handle(&mut self, action: Action, now: f64) {
-        let state = &mut self.state;
-        match state.status {
+    pub fn update(&mut self) {
+        match self.state.status {
             GameStatus::Start => {
-                if matches!(action, Action::Confirm | Action::Tap | Action::HardDrop) {
-                    self.effects.clear();
-                    state.start();
+                if self.renderer.check_click(GameStatus::Start) {
+                    self.state.start();
+                    // Prevent the button tap from rotating the first piece
+                    self.input.reset();
                 }
             }
-            GameStatus::Playing => match action {
-                Action::MoveLeft => {
-                    state.move_horizontal(-1);
-                }
-                Action::MoveRight => {
-                    state.move_horizontal(1);
-                }
-                Action::RotateClockwise | Action::Tap => {
-                    state.rotate(true);
-                }
-                Action::RotateCounterClockwise => {
-                    state.rotate(false);
-                }
-                Action::HardDrop => state.hard_drop(),
-                Action::Hold => state.hold(),
-                Action::Pause => state.toggle_pause(),
-                Action::Confirm => {}
-            },
-            GameStatus::Paused => {
-                if matches!(action, Action::Pause | Action::Confirm | Action::Tap) {
-                    state.toggle_pause();
-                }
+            GameStatus::Playing => {
+                let input = self.input.update();
+                self.state.handle_input(input);
+                self.state.update(get_frame_time());
             }
             GameStatus::GameOver => {
-                let ready = now - self.game_over_time > RESTART_DELAY;
-                if ready && matches!(action, Action::Confirm | Action::Tap | Action::HardDrop) {
-                    self.effects.clear();
-                    state.start();
+                if self.renderer.check_click(GameStatus::GameOver) {
+                    self.state.restart();
+                    self.input.reset();
                 }
             }
+        }
+
+        let events = self.state.take_events();
+        if events.piece_locked {
+            // Don't carry a held drop or move over to the next piece
+            self.input.reset();
+        }
+        if events.board_changed {
+            self.renderer.mark_board_dirty();
         }
     }
 }
