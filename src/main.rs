@@ -1,13 +1,14 @@
+mod cache;
 mod config;
-mod effects;
+mod dummy_board;
 mod game;
 mod input;
-mod layout;
 mod logic;
-mod platform;
 mod renderer;
+mod screen;
+mod state;
+mod storage;
 mod tetromino;
-mod text;
 
 use config::TEXT;
 use game::Game;
@@ -16,7 +17,7 @@ use miniquad::date;
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: TEXT.title.to_string(),
+        window_title: TEXT.game_name.to_string(),
         high_dpi: true,
         window_resizable: true,
         ..Default::default()
@@ -30,7 +31,8 @@ async fn main() {
 
     let mut game = Game::new();
     loop {
-        game.frame();
+        game.update();
+        game.renderer.draw(&game.state);
         next_frame().await;
     }
 }
