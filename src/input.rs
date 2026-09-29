@@ -1,8 +1,11 @@
 use std::collections::VecDeque;
 
-use macroquad::prelude::*;
+use macroquad::{input::utils, prelude::*};
 
-use crate::config::{INPUT, Time};
+use crate::{
+    config::{INPUT, Time},
+    storage,
+};
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum InputState {
@@ -15,15 +18,34 @@ pub enum InputState {
 }
 
 struct TouchState {
+    id: u64,
     start_x: f32,
     start_time: Time,
+    /// Exact time the finger touched down, if the browser reported it
+    start_exact: Option<Time>,
     /// Direction of the running swipe, repeated while swiping or resting the finger
     direction: Option<InputState>,
     dropping: bool,
 }
 
+/// Collects all touch events of a frame in their order
+#[derive(Default)]
+struct TouchEvents(Vec<(miniquad::TouchPhase, u64, f32)>);
+
+impl miniquad::EventHandler for TouchEvents {
+    fn update(&mut self) {}
+    fn draw(&mut self) {}
+    fn touch_event(&mut self, phase: miniquad::TouchPhase, id: u64, x: f32, _y: f32) {
+        self.0.push((phase, id, x));
+    }
+}
+
 pub struct InputHandler {
     touch: Option<TouchState>,
+    /// Receives every touch event, `touches()` only has the last state per frame
+    event_subscriber: usize,
+    /// Touch actions not handled yet, a frame can contain several touch events
+    pending_touch: VecDeque<InputState>,
     /// Key presses not handled yet, several keys can be pressed within one frame
     pending_keys: VecDeque<InputState>,
     last_move_time: Time,
@@ -34,6 +56,8 @@ impl InputHandler {
     pub fn new() -> Self {
         Self {
             touch: None,
+            event_subscriber: utils::register_input_subscriber(),
+            pending_touch: VecDeque::new(),
             pending_keys: VecDeque::new(),
             last_move_time: Time(0.0),
             key_hold_start: None,
@@ -41,9 +65,12 @@ impl InputHandler {
     }
 
     pub fn update(&mut self) -> InputState {
-        let touch_input = self.handle_touch();
-        if touch_input != InputState::None {
-            return touch_input;
+        self.handle_touch();
+        if let Some(input) = self.pending_touch.pop_front() {
+            return input;
+        }
+        if self.touch.as_ref().is_some_and(|touch| touch.dropping) {
+            return InputState::Drop;
         }
 
         self.handle_keyboard()
@@ -106,77 +133,109 @@ impl InputHandler {
         InputState::None
     }
 
-    fn handle_touch(&mut self) -> InputState {
-        let touches = touches();
-        let Some(touch) = touches.first() else {
-            return InputState::None;
-        };
+    /// Handles every touch event in order. With a low frame rate, for example in power
+    /// saving mode, starting, moving and lifting a finger can happen within one frame.
+    /// Taps are measured with the exact event times, as a frame can take longer than a tap.
+    /// Everything else works with the frame time like before.
+    fn handle_touch(&mut self) {
         let current_time = Time(get_time());
-        let x = touch.position.x;
+        let mut events = TouchEvents::default();
+        utils::repeat_all_miniquad_input(&mut events, self.event_subscriber);
 
-        match touch.phase {
-            TouchPhase::Started => {
-                self.touch = Some(TouchState {
-                    start_x: x,
-                    start_time: current_time,
-                    direction: None,
-                    dropping: false,
-                });
-            }
-            TouchPhase::Moved => {
-                let Some(state) = self.touch.as_mut() else {
-                    return InputState::None;
-                };
-                if state.dropping {
-                    return InputState::Drop;
-                }
-
-                // A short swipe starts moving the piece in that direction
-                let dx = x - state.start_x;
-                if dx.abs() > INPUT.swipe_threshold
-                    && current_time - self.last_move_time > INPUT.move_cooldown_swipe
-                {
-                    self.last_move_time = current_time;
-                    let direction = if dx > 0.0 {
-                        InputState::MoveRight
-                    } else {
-                        InputState::MoveLeft
-                    };
-                    state.direction = Some(direction);
-                    return direction;
-                }
-            }
-            TouchPhase::Stationary => {
-                let Some(state) = self.touch.as_mut() else {
-                    return InputState::None;
-                };
-
-                if let Some(direction) = state.direction {
-                    // Resting the finger after a swipe keeps moving the piece
-                    if current_time - self.last_move_time > INPUT.move_cooldown_hold {
-                        self.last_move_time = current_time;
-                        return direction;
+        let mut moved = false;
+        for (phase, id, x) in events.0 {
+            let exact = storage::next_touch_time(id).map(Time);
+            match phase {
+                miniquad::TouchPhase::Started => {
+                    // Further fingers are ignored while one is down
+                    if self.touch.is_none() {
+                        self.touch = Some(TouchState {
+                            id,
+                            start_x: x,
+                            start_time: current_time,
+                            start_exact: exact,
+                            direction: None,
+                            dropping: false,
+                        });
+                        moved = true;
                     }
-                } else if current_time - state.start_time > INPUT.hold_threshold {
-                    state.dropping = true;
-                    return InputState::Drop;
                 }
-            }
-            TouchPhase::Ended | TouchPhase::Cancelled => {
-                if let Some(state) = self.touch.take() {
-                    let tap = current_time - state.start_time < INPUT.touch_threshold;
-                    if tap && state.direction.is_none() {
-                        return InputState::Rotate;
+                miniquad::TouchPhase::Moved => {
+                    if self.touch.as_ref().is_some_and(|touch| touch.id == id) {
+                        self.touch_moved(x, current_time);
+                        moved = true;
+                    }
+                }
+                miniquad::TouchPhase::Ended | miniquad::TouchPhase::Cancelled => {
+                    if self.touch.as_ref().is_some_and(|touch| touch.id == id) {
+                        let state = self.touch.take().expect("checked above");
+                        let duration = match (exact, state.start_exact) {
+                            (Some(end), Some(start)) => end - start,
+                            _ => current_time - state.start_time,
+                        };
+                        let tap = duration < INPUT.touch_threshold;
+                        if tap && state.direction.is_none() {
+                            self.pending_touch.push_back(InputState::Rotate);
+                        }
                     }
                 }
             }
         }
-        InputState::None
+        storage::clear_touch_times();
+
+        // A frame without events of the finger means it rests
+        if !moved {
+            self.touch_resting(current_time);
+        }
+    }
+
+    fn touch_moved(&mut self, x: f32, current_time: Time) {
+        let Some(state) = self.touch.as_mut() else {
+            return;
+        };
+        if state.dropping {
+            return;
+        }
+
+        // A short swipe starts moving the piece in that direction
+        let dx = x - state.start_x;
+        if dx.abs() > INPUT.swipe_threshold
+            && current_time - self.last_move_time > INPUT.move_cooldown_swipe
+        {
+            self.last_move_time = current_time;
+            let direction = if dx > 0.0 {
+                InputState::MoveRight
+            } else {
+                InputState::MoveLeft
+            };
+            state.direction = Some(direction);
+            self.pending_touch.push_back(direction);
+        }
+    }
+
+    fn touch_resting(&mut self, current_time: Time) {
+        let Some(state) = self.touch.as_mut() else {
+            return;
+        };
+
+        if let Some(direction) = state.direction {
+            // Resting the finger after a swipe keeps moving the piece
+            if current_time - self.last_move_time > INPUT.move_cooldown_hold {
+                self.last_move_time = current_time;
+                self.pending_touch.push_back(direction);
+            }
+        } else if current_time - state.start_time > INPUT.hold_threshold {
+            state.dropping = true;
+        }
     }
 
     pub fn reset(&mut self) {
         self.touch = None;
+        self.pending_touch.clear();
         self.pending_keys.clear();
+        // Events of the current touches, e.g. the tap on the start button, are handled
+        utils::repeat_all_miniquad_input(&mut TouchEvents::default(), self.event_subscriber);
+        storage::clear_touch_times();
         self.key_hold_start = None;
     }
 }
